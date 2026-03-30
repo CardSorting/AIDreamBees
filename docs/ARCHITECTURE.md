@@ -47,6 +47,25 @@ BroccoliDB is 100% local. It uses SQLite for high-performance persistence, ensur
 
 ---
 
+## ⚡ High-Performance Persistence & Infrastructure
+
+To support the real-time demands of the Cognitive Substrate, AIDreamBees uses a custom infrastructure layer designed for high throughput and reliability on top of SQLite.
+
+### 1. BufferedDbPool: Asynchronous Write-Behind
+The `BufferedDbPool` is a high-performance database wrapper that implements a **Write-Behind** strategy. 
+- **Batching**: Instead of executing every write immediately, it buffers operations and flushes them to disk in large, atomic transactions. This drastically reduces disk I/O overhead.
+- **Agent Shadows**: It maintains isolated "shadow" buffers for concurrent agents (like different bot orchestrators), ensuring that uncommitted state is visible to the agent that created it without leaking to others prematurely.
+- **Atomic Increments**: Supports atomic field increments within the buffered layer, essential for maintaining counters and job attempt tracking without race conditions.
+
+### 2. SqliteQueue: Hardened Background Processing
+The `SqliteQueue` provides a production-grade background job system built directly on the `BufferedDbPool`.
+- **Memory-First Strategy**: It uses a local memory buffer for immediate job dispatch, reducing database polling latency to near-zero for high-frequency tasks.
+- **Pipelined Batching**: Supports processing jobs in true batches (e.g., 500-1000 at a time), which is 10x-100x more efficient than processing jobs individually.
+- **Exponential Backoff**: Built-in retry logic with configurable backoff ensures that transient failures (like API rate limits) don't crash the system.
+- **Stale Job Reclamation**: Automatically detects and recovers jobs stuck in "processing" due to unexpected system crashes, ensuring zero job loss.
+
+---
+
 ## ⚡ Real-Time Engine (Soketi)
 
 The system uses [Soketi](https://soketi.app/), a high-performance, Pusher-compatible WebSocket server. This enables:

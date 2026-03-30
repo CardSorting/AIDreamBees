@@ -76,3 +76,53 @@ The frontend uses **Framer Motion** for animations and **Vanilla CSS** for high-
 
 When developing, check `backend/combined.log` for cognitive audit trails and Soketi broadcast confirmations.
 To view the database directly, you can use any SQLite browser on `backend/nano_banana.db`.
+
+---
+
+## ⚡ High-Performance Infrastructure
+
+AIDreamBees uses a custom infrastructure layer to ensure high performance with SQLite.
+
+### Using `dbPool` (BufferedDbPool)
+Instead of direct database access, use the `dbPool` for all write operations. It automatically batches and flushes changes.
+
+```typescript
+import { dbPool } from './infrastructure/db/BufferedDbPool';
+
+// Standard push (asynchronous, will be batched)
+await dbPool.push({
+  type: 'insert',
+  table: 'messages',
+  values: { content: 'Hello' },
+  layer: 'domain'
+});
+
+// Transactional work (agent-specific shadow)
+await dbPool.runTransaction(async (agentId) => {
+  await dbPool.push({ ... }, agentId);
+  const data = await dbPool.selectWhere('table', { column: 'id', value: 1 }, agentId);
+  // ...
+});
+```
+
+### Using `SqliteQueue`
+For background tasks, use the `SqliteQueue`. It is optimized for high-throughput batching.
+
+```typescript
+import { SqliteQueue } from './infrastructure/queue/SqliteQueue';
+
+const queue = new SqliteQueue<MyPayload>();
+
+// Enqueue a job
+await queue.enqueue({ data: '...' });
+
+// Process jobs individually
+queue.process(async (job) => {
+  console.log(job.payload);
+}, { concurrency: 50 });
+
+// Process jobs in batches (highly recommended for performance)
+queue.processBatch(async (jobs) => {
+  console.log(`Processing ${jobs.length} jobs`);
+}, { batchSize: 500 });
+```
