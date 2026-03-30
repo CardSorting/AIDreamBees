@@ -6,7 +6,8 @@
   "type": "module",
   "scripts": {
     "start": "tsx server.js",
-    "substrate:cli": "tsx broccolidb/cli/index.ts"
+    "substrate:cli": "tsx broccolidb/cli/index.ts",
+    "setup": "tsx scripts/setup.ts"
   },
   "dependencies": {
     "@google/genai": "^1.47.0",
