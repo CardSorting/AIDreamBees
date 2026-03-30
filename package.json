@@ -1,6 +1,8 @@
 {
   "name": "aidreambees",
   "version": "1.0.0",
+  "author": "CardSorting/AIDreamBees Contributors",
+  "license": "MIT",
   "description": "A high-performance, real-time chat interface for the **Nano Banana 2** model.",
   "main": "index.js",
   "scripts": {
@@ -11,8 +13,6 @@
     "url": "git+https://github.com/CardSorting/AIDreamBees.git"
   },
   "keywords": [],
-  "author": "",
-  "license": "ISC",
   "bugs": {
     "url": "https://github.com/CardSorting/AIDreamBees/issues"
   },

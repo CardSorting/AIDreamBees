@@ -1,6 +1,8 @@
 {
   "name": "nano-banana-bot",
   "version": "1.0.0",
+  "author": "CardSorting/AIDreamBees Contributors",
+  "license": "MIT",
   "description": "Multimodal bot for Nano Banana 2",
   "main": "server.js",
   "type": "module",
