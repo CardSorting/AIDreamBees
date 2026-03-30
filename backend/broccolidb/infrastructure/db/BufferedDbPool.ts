@@ -251,21 +251,18 @@ export class BufferedDbPool {
   /**
    * Flushes all buffered operations to disk in a single transaction.
    * Handles bulk inserts, upserts, and complex updates with increment support.
+   * Optimized for high throughput with reduced mutex contention.
    */
   public async flush() {
-    // Check if there's anything to flush before acquiring flushMutex
-    const earlyCheckRelease = await this.stateMutex.acquire();
-    try {
-      if (this.globalBuffer.length === 0) return;
-    } finally {
-      earlyCheckRelease();
-    }
+    // Fast path: check without mutex first
+    if (this.globalBuffer.length === 0 && this.inFlightOps.length === 0) return;
 
     const releaseFlush = await this.flushMutex.acquire();
     let opsToFlush: WriteOp[] = [];
     const startTime = Date.now();
 
     try {
+      // Double-check after acquiring flush mutex
       const releaseState = await this.stateMutex.acquire();
       try {
         if (this.globalBuffer.length === 0) return;
@@ -294,6 +291,9 @@ export class BufferedDbPool {
 
           if (group.length > 1 && first.type === 'insert') {
             totalFlushed += await this.executeBulkInsert(trx, table, group);
+          } else if (group.length > 1 && first.type === 'update') {
+            // Batch updates when possible
+            totalFlushed += await this.executeBulkUpdate(trx, table, group);
           } else {
             for (const op of group) {
               await this.executeSingleOp(trx, op);
@@ -304,9 +304,10 @@ export class BufferedDbPool {
       });
 
       const duration = Date.now() - startTime;
-      if (duration > 500 || totalFlushed > 100) {
+      const throughput = Math.round(totalFlushed / (duration / 1000));
+      if (duration > 100 || totalFlushed > 50) {
         console.log(
-          `[DbPool] Flush completed: ${totalFlushed} ops in ${duration}ms (buffer size: ${this.globalBuffer.length})`,
+          `[DbPool] Flush completed: ${totalFlushed} ops in ${duration}ms (${throughput} ops/sec, buffer: ${this.globalBuffer.length})`,
         );
       }
 
@@ -346,6 +347,64 @@ export class BufferedDbPool {
     } finally {
       releaseFlush();
     }
+  }
+
+  /**
+   * Execute batch updates for improved throughput.
+   * Groups updates by their column values for efficient bulk operations.
+   */
+  private async executeBulkUpdate(
+    trx: Transaction<Schema>,
+    table: keyof Schema,
+    group: WriteOp[],
+  ): Promise<number> {
+    if (group.length === 0) return 0;
+
+    // Optimization: If all updates are the same set of values and targeting a list of IDs via 'id IN (...)'
+    // This is common for queue status updates (e.g., status='done' for a batch of jobs)
+    const first = group[0];
+    const canBatchIntoSingleStatement = group.every(
+      (op) =>
+        JSON.stringify(op.values) === JSON.stringify(first.values) &&
+        op.where &&
+        !Array.isArray(op.where) &&
+        op.where.column === 'id' &&
+        (op.where.operator === '=' || op.where.operator === undefined),
+    );
+
+    if (canBatchIntoSingleStatement && first.where && !Array.isArray(first.where)) {
+      const ids = group.map((op) => (op.where as WhereCondition).value);
+      const valuesWithNoIncrements: Record<string, unknown> = {};
+      const increments: Record<string, number> = {};
+
+      for (const [k, v] of Object.entries(first.values || {})) {
+        if (this.isIncrement(v)) {
+          increments[k] = v.value;
+        } else {
+          valuesWithNoIncrements[k] = v;
+        }
+      }
+
+      let query = trx.updateTable(table);
+      const sets: Record<string, unknown> = { ...valuesWithNoIncrements };
+      for (const [k, v] of Object.entries(increments)) {
+        sets[k] = sql`${sql.ref(k)} + ${v}`;
+      }
+
+      await query
+        .set(sets as never)
+        .where('id' as any, 'in', ids as any)
+        .execute();
+      return group.length;
+    }
+
+    // Fallback: Parallel execution for heterogeneous updates
+    const promises: Promise<void>[] = [];
+    for (const op of group) {
+      promises.push(this.executeSingleOp(trx, op));
+    }
+    await Promise.all(promises);
+    return group.length;
   }
 
   /**

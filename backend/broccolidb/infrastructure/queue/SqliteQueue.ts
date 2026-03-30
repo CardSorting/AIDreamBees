@@ -16,6 +16,7 @@ export interface QueueJob<T> {
 }
 
 export type JobHandler<T> = (job: QueueJob<T>) => Promise<void>;
+export type BatchJobHandler<T> = (jobs: QueueJob<T>[]) => Promise<void>;
 
 export interface SqliteQueueOptions {
   dbPath?: string;
@@ -34,6 +35,10 @@ export class SqliteQueue<T> {
   private isProcessing = false;
   private stopRequested = false;
   private wakeUpEmitter = new EventEmitter();
+
+  // Memory-First cache for pending jobs
+  private pendingMemoryBuffer: QueueJob<T>[] = [];
+  private maxMemoryBufferSize = 1000;
 
   private visibilityTimeoutMs: number;
   private pruneDoneAgeMs: number;
@@ -77,24 +82,35 @@ export class SqliteQueue<T> {
     const runAt = now + (options.delayMs || 0);
     const maxAttempts = options.maxAttempts ?? this.defaultMaxAttempts;
 
+    const values = {
+      id: jobId,
+      payload: typeof payload === 'string' ? payload : JSON.stringify(payload),
+      status: 'pending' as const,
+      priority: options.priority || 0,
+      attempts: 0,
+      maxAttempts,
+      runAt,
+      createdAt: now,
+      updatedAt: now,
+      error: null,
+    };
+
     await dbPool.push({
       type: 'upsert',
       table: 'queue_jobs',
-      values: {
-        id: jobId,
-        payload: JSON.stringify(payload),
-        status: 'pending',
-        priority: options.priority || 0,
-        attempts: 0,
-        maxAttempts,
-        runAt,
-        createdAt: now,
-        updatedAt: now,
-        error: null,
-      },
+      values,
       where: { column: 'id', value: jobId },
       layer: 'infrastructure',
     });
+
+    // Memory-First: Add to local buffer if it's immediate and buffer has room
+    if (runAt <= now && this.pendingMemoryBuffer.length < this.maxMemoryBufferSize) {
+      this.pendingMemoryBuffer.push({
+        ...values,
+        payload: payload as T,
+      } as unknown as QueueJob<T>);
+    }
+
     this.wakeUpEmitter.emit('enqueue');
     return jobId;
   }
@@ -111,21 +127,32 @@ export class SqliteQueue<T> {
       const jobId = item.id || crypto.randomUUID();
       const runAt = now + (item.delayMs || 0);
       ids.push(jobId);
+
+      const values = {
+        id: jobId,
+        payload: typeof item.payload === 'string' ? item.payload : JSON.stringify(item.payload),
+        status: 'pending' as const,
+        priority: item.priority || 0,
+        attempts: 0,
+        maxAttempts: this.defaultMaxAttempts,
+        runAt,
+        createdAt: now,
+        updatedAt: now,
+        error: null,
+      };
+
+      // Memory-First: Add to local buffer if it's immediate and buffer has room
+      if (runAt <= now && this.pendingMemoryBuffer.length < this.maxMemoryBufferSize) {
+        this.pendingMemoryBuffer.push({
+          ...values,
+          payload: item.payload as T,
+        } as unknown as QueueJob<T>);
+      }
+
       return {
         type: 'insert' as const,
         table: 'queue_jobs' as const,
-        values: {
-          id: jobId,
-          payload: JSON.stringify(item.payload),
-          status: 'pending' as const,
-          priority: item.priority || 0,
-          attempts: 0,
-          maxAttempts: this.defaultMaxAttempts,
-          runAt,
-          createdAt: now,
-          updatedAt: now,
-          error: null,
-        },
+        values,
         layer: 'infrastructure' as const,
       };
     });
@@ -137,8 +164,36 @@ export class SqliteQueue<T> {
 
   /**
    * Dequeue multiple jobs atomically using a transaction.
+   * Prioritizes Memory-First buffer over DB polling.
    */
   async dequeueBatch(limit: number): Promise<QueueJob<T>[]> {
+    // Memory-First: Try local buffer first
+    if (this.pendingMemoryBuffer.length > 0) {
+      const jobs = this.pendingMemoryBuffer.splice(0, limit);
+      const ids = jobs.map((j) => j.id);
+      const nowMs = Date.now();
+
+      // Async update status in DB (no need to wait for transaction if it was in memory)
+      await dbPool.push({
+        type: 'update',
+        table: 'queue_jobs',
+        values: {
+          status: 'processing',
+          updatedAt: nowMs,
+          attempts: BufferedDbPool.increment(1),
+        },
+        where: { column: 'id', value: ids, operator: 'IN' },
+        layer: 'infrastructure',
+      });
+
+      return jobs.map((job) => ({
+        ...job,
+        status: 'processing',
+        updatedAt: nowMs,
+        attempts: job.attempts + 1,
+      }));
+    }
+
     const now = Date.now();
     try {
       return await dbPool.runTransaction(async (agentId) => {
@@ -151,14 +206,19 @@ export class SqliteQueue<T> {
           agentId,
           {
             orderBy: { column: 'priority', direction: 'desc' },
-            limit,
+            limit: limit * 2, // Fetch extra for pre-filling local buffer
           },
         );
 
         if (jobs.length === 0) return [];
 
-        const ids = jobs.map((j) => j.id);
+        // Split into immediate return and local buffer
+        const toReturn = jobs.slice(0, limit);
+        const toBuffer = jobs.slice(limit);
+
+        const allIds = jobs.map((j) => j.id);
         const nowMs = Date.now();
+
         await dbPool.push(
           {
             type: 'update',
@@ -168,19 +228,28 @@ export class SqliteQueue<T> {
               updatedAt: nowMs,
               attempts: BufferedDbPool.increment(1),
             },
-            where: { column: 'id', value: ids, operator: 'IN' },
+            where: { column: 'id', value: allIds, operator: 'IN' },
             layer: 'infrastructure',
           },
           agentId,
         );
 
-        return jobs.map((job) => ({
+        const mappedJobs = jobs.map((job) => ({
           ...job,
-          payload: JSON.parse(job.payload) as T,
+          payload: typeof job.payload === 'string' && job.payload.startsWith('{') 
+            ? JSON.parse(job.payload) as T 
+            : job.payload as T,
           updatedAt: nowMs,
           attempts: job.attempts + 1,
           status: 'processing' as const,
         })) as unknown as QueueJob<T>[];
+
+        // Fill memory buffer for next call
+        if (toBuffer.length > 0) {
+          this.pendingMemoryBuffer.push(...mappedJobs.slice(limit));
+        }
+
+        return mappedJobs.slice(0, limit);
       });
     } catch (e) {
       console.error('[SqliteQueue] DequeueBatch failed:', e);
@@ -343,12 +412,24 @@ export class SqliteQueue<T> {
 
   /**
    * Main processing loop with fluid concurrency and high-throughput batching.
+   * Optimized for individual job handlers with pipelined completion batching.
    */
   async process(
     handler: JobHandler<T>,
-    options: { concurrency?: number; pollIntervalMs?: number; batchSize?: number } = {},
+    options: { 
+      concurrency?: number; 
+      pollIntervalMs?: number; 
+      batchSize?: number;
+      completionFlushMs?: number;
+    } = {},
   ) {
-    const { concurrency = 10, pollIntervalMs = 100, batchSize = 100 } = options;
+    const { 
+      concurrency = 500, 
+      pollIntervalMs = 1, 
+      batchSize = 500,
+      completionFlushMs = 1,
+    } = options;
+    
     if (this.isProcessing) return;
     this.isProcessing = true;
     this.stopRequested = false;
@@ -356,71 +437,325 @@ export class SqliteQueue<T> {
     // Background maintenance loop (every 30s)
     const maintenanceInterval = setInterval(() => this.performMaintenance(), 30000);
 
-    let activeWorkers = 0;
+    // Completion batching state
     let pendingCompletions: string[] = [];
-    let completionTimeout: NodeJS.Timeout | null = null;
+    let pendingFailures: { id: string; error: string }[] = [];
+    let completionFlushPending = false;
+    let lastFlushTime = Date.now();
 
     const flushCompletions = async () => {
-      if (pendingCompletions.length > 0) {
-        const ids = [...pendingCompletions];
-        pendingCompletions = [];
-        await this.completeBatch(ids);
+      completionFlushPending = false;
+      lastFlushTime = Date.now();
+      
+      const completionsToFlush = pendingCompletions;
+      const failuresToFlush = pendingFailures;
+      pendingCompletions = [];
+      pendingFailures = [];
+
+      const promises: Promise<void>[] = [];
+      
+      if (completionsToFlush.length > 0) {
+        promises.push(this.completeBatch(completionsToFlush));
       }
-      completionTimeout = null;
+      
+      if (failuresToFlush.length > 0) {
+        // Batch fail operations
+        const now = Date.now();
+        const ops = failuresToFlush.map(({ id, error }) => ({
+          type: 'update' as const,
+          table: 'queue_jobs' as const,
+          values: { status: 'failed' as const, error, updatedAt: now },
+          where: { column: 'id', value: id },
+          layer: 'infrastructure' as const,
+        }));
+        promises.push(dbPool.pushBatch(ops));
+      }
+
+      if (promises.length > 0) {
+        await Promise.all(promises);
+      }
     };
 
     const scheduleCompletion = (id: string) => {
       pendingCompletions.push(id);
-      if (pendingCompletions.length >= batchSize) {
-        if (completionTimeout) clearTimeout(completionTimeout);
-        flushCompletions().catch(console.error);
-      } else if (!completionTimeout) {
-        completionTimeout = setTimeout(() => flushCompletions(), 10);
+      const shouldFlush = pendingCompletions.length >= batchSize || 
+                         (Date.now() - lastFlushTime > completionFlushMs && !completionFlushPending);
+      
+      if (shouldFlush && !completionFlushPending) {
+        completionFlushPending = true;
+        // Use setImmediate for immediate flush, setTimeout for debounced
+        if (pendingCompletions.length >= batchSize) {
+          setImmediate(() => flushCompletions().catch(console.error));
+        } else {
+          setTimeout(() => flushCompletions().catch(console.error), 0);
+        }
       }
     };
 
+    const scheduleFailure = (id: string, error: string) => {
+      pendingFailures.push({ id, error });
+      if (pendingFailures.length >= batchSize && !completionFlushPending) {
+        completionFlushPending = true;
+        setImmediate(() => flushCompletions().catch(console.error));
+      }
+    };
+
+    // Pipeline state
+    let inFlightJobs = 0;
+    const jobPromises = new Set<Promise<void>>();
+
     const runWorker = async () => {
       while (!this.stopRequested) {
-        if (activeWorkers >= concurrency) {
-          await new Promise((resolve) => setTimeout(resolve, 5));
+        // Pipeline: dequeue next batch while previous is processing
+        const limit = Math.min(batchSize, concurrency - inFlightJobs);
+        
+        if (limit <= 0) {
+          // Wait for some jobs to complete before dequeuing more
+          if (jobPromises.size > 0) {
+            await Promise.race(jobPromises);
+          }
           continue;
         }
 
-        const limit = Math.min(batchSize, concurrency - activeWorkers);
         const jobs = await this.dequeueBatch(limit);
 
-        if (jobs.length > 0) {
-          for (const job of jobs) {
-            activeWorkers++;
-            (async () => {
-              try {
-                await handler(job);
-                scheduleCompletion(job.id);
-              } catch (err: unknown) {
-                const error = err instanceof Error ? err.message : String(err);
-                await this.fail(job.id, error);
-              } finally {
-                activeWorkers--;
-              }
-            })();
+        if (jobs.length === 0) {
+          // No jobs available - flush any pending completions and wait
+          if (pendingCompletions.length > 0 || pendingFailures.length > 0) {
+            await flushCompletions();
           }
-          // Micro-tick to keep loop moving
-          await new Promise((resolve) => setImmediate(resolve));
-        } else {
-          // No jobs, wait for signal or interval
-          await Promise.race([
-            new Promise((resolve) => setTimeout(resolve, pollIntervalMs)),
-            new Promise((resolve) => this.wakeUpEmitter.once('enqueue', resolve)),
-          ]);
+          
+          if (jobPromises.size > 0) {
+            // Wait for in-flight jobs to complete
+            await Promise.race(jobPromises);
+          } else {
+            // Nothing in flight, wait for new jobs
+            await Promise.race([
+              new Promise((resolve) => setTimeout(resolve, pollIntervalMs)),
+              new Promise((resolve) => this.wakeUpEmitter.once('enqueue', resolve)),
+            ]);
+          }
+          continue;
         }
+
+        // Process jobs concurrently as a batch
+        const batchPromise = (async () => {
+          const localJobs = jobs;
+          
+          await Promise.all(localJobs.map(async (job) => {
+            try {
+              await handler(job);
+              scheduleCompletion(job.id);
+            } catch (err: unknown) {
+              const error = err instanceof Error ? err.message : String(err);
+              scheduleFailure(job.id, error);
+            }
+          }));
+        })();
+
+        inFlightJobs += jobs.length;
+        jobPromises.add(batchPromise);
+        
+        batchPromise.then(() => {
+          inFlightJobs -= jobs.length;
+          jobPromises.delete(batchPromise);
+        }).catch(() => {
+          inFlightJobs -= jobs.length;
+          jobPromises.delete(batchPromise);
+        });
+
+        // Non-blocking continuation - immediately try to dequeue more
+        // No setImmediate needed - the await at top of loop handles backpressure
       }
     };
 
     const worker = runWorker();
 
-    const cleanup = () => {
+    const cleanup = async () => {
       clearInterval(maintenanceInterval);
-      if (completionTimeout) clearTimeout(completionTimeout);
+      // Wait for in-flight jobs and flush final completions
+      await Promise.all(jobPromises);
+      await flushCompletions();
+      this.isProcessing = false;
+    };
+
+    worker.then(cleanup).catch(cleanup);
+  }
+
+  /**
+   * High-throughput batch processing loop.
+   * Processes jobs in true batches, reducing transaction overhead by 10x or more.
+   * 
+   * @param batchHandler - Receives an array of jobs to process as a batch
+   * @param options - Configuration options
+   */
+  async processBatch(
+    batchHandler: BatchJobHandler<T>,
+    options: { 
+      pollIntervalMs?: number; 
+      batchSize?: number;
+      maxInFlightBatches?: number;
+      completionFlushMs?: number;
+    } = {},
+  ) {
+    const { 
+      pollIntervalMs = 1, 
+      batchSize = 1000,
+      maxInFlightBatches = 5,
+      completionFlushMs = 1,
+    } = options;
+    
+    if (this.isProcessing) return;
+    this.isProcessing = true;
+    this.stopRequested = false;
+
+    // Background maintenance loop (every 30s)
+    const maintenanceInterval = setInterval(() => this.performMaintenance(), 30000);
+
+    // Completion batching state
+    let pendingCompletions: string[] = [];
+    let pendingFailures: { id: string; error: string }[] = [];
+    let completionFlushPending = false;
+    let lastFlushTime = Date.now();
+
+    const flushCompletions = async () => {
+      completionFlushPending = false;
+      lastFlushTime = Date.now();
+      
+      const completionsToFlush = pendingCompletions;
+      const failuresToFlush = pendingFailures;
+      pendingCompletions = [];
+      pendingFailures = [];
+
+      const promises: Promise<void>[] = [];
+      
+      if (completionsToFlush.length > 0) {
+        promises.push(this.completeBatch(completionsToFlush));
+      }
+      
+      if (failuresToFlush.length > 0) {
+        const now = Date.now();
+        const ops = failuresToFlush.map(({ id, error }) => ({
+          type: 'update' as const,
+          table: 'queue_jobs' as const,
+          values: { status: 'failed' as const, error, updatedAt: now },
+          where: { column: 'id', value: id },
+          layer: 'infrastructure' as const,
+        }));
+        promises.push(dbPool.pushBatch(ops));
+      }
+
+      if (promises.length > 0) {
+        await Promise.all(promises);
+      }
+    };
+
+    const scheduleCompletion = (id: string) => {
+      pendingCompletions.push(id);
+      const shouldFlush = pendingCompletions.length >= batchSize || 
+                         (Date.now() - lastFlushTime > completionFlushMs && !completionFlushPending);
+      
+      if (shouldFlush && !completionFlushPending) {
+        completionFlushPending = true;
+        if (pendingCompletions.length >= batchSize) {
+          setImmediate(() => flushCompletions().catch(console.error));
+        } else {
+          setTimeout(() => flushCompletions().catch(console.error), 0);
+        }
+      }
+    };
+
+    const scheduleFailure = (id: string, error: string) => {
+      pendingFailures.push({ id, error });
+      if (pendingFailures.length >= batchSize && !completionFlushPending) {
+        completionFlushPending = true;
+        setImmediate(() => flushCompletions().catch(console.error));
+      }
+    };
+
+    // Pipeline state - track in-flight batch processing
+    let inFlightBatches = 0;
+    const batchPromises = new Set<Promise<void>>();
+
+    const runWorker = async () => {
+      while (!this.stopRequested) {
+        // Pipeline backpressure: limit concurrent batches
+        if (inFlightBatches >= maxInFlightBatches) {
+          await Promise.race(batchPromises);
+          continue;
+        }
+
+        const jobs = await this.dequeueBatch(batchSize);
+
+        if (jobs.length === 0) {
+          // No jobs - flush completions and wait
+          if (pendingCompletions.length > 0 || pendingFailures.length > 0) {
+            await flushCompletions();
+          }
+          
+          if (batchPromises.size > 0) {
+            await Promise.race(batchPromises);
+          } else {
+            await Promise.race([
+              new Promise((resolve) => setTimeout(resolve, pollIntervalMs)),
+              new Promise((resolve) => this.wakeUpEmitter.once('enqueue', resolve)),
+            ]);
+          }
+          continue;
+        }
+
+        // Process batch
+        const currentBatchPromise = (async () => {
+          const localJobs = jobs;
+          const completedIds: string[] = [];
+          const failedJobs: { id: string; error: string }[] = [];
+
+          try {
+            // User's batch handler processes all jobs
+            await batchHandler(localJobs);
+            
+            // Mark all as completed (user is responsible for individual failures)
+            for (const job of localJobs) {
+              completedIds.push(job.id);
+            }
+          } catch (err: unknown) {
+            // Batch handler failed entirely - mark all as failed
+            const error = err instanceof Error ? err.message : String(err);
+            for (const job of localJobs) {
+              failedJobs.push({ id: job.id, error });
+            }
+          }
+
+          // Queue completions/failures for batch flush
+          for (const id of completedIds) {
+            scheduleCompletion(id);
+          }
+          for (const fail of failedJobs) {
+            scheduleFailure(fail.id, fail.error);
+          }
+        })();
+
+        inFlightBatches++;
+        batchPromises.add(currentBatchPromise);
+        
+        currentBatchPromise.then(() => {
+          inFlightBatches--;
+          batchPromises.delete(currentBatchPromise);
+        }).catch(() => {
+          inFlightBatches--;
+          batchPromises.delete(currentBatchPromise);
+        });
+
+        // Immediately try to dequeue next batch (pipelining)
+      }
+    };
+
+    const worker = runWorker();
+
+    const cleanup = async () => {
+      clearInterval(maintenanceInterval);
+      await Promise.all(batchPromises);
+      await flushCompletions();
       this.isProcessing = false;
     };
 
