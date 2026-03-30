@@ -37,8 +37,12 @@ export class SqliteQueue<T> {
   private wakeUpEmitter = new EventEmitter();
 
   // Memory-First cache for pending jobs
+  private static sharedPendingMemoryBuffer = new Map<string, any[]>();
+  private static bufferMutex = new EventEmitter(); // Primitive lock
+  private static isLocked = false;
+
   private pendingMemoryBuffer: QueueJob<T>[] = [];
-  private maxMemoryBufferSize = 1000;
+  private maxMemoryBufferSize = 5000; // Larger buffer for higher throughput
 
   private visibilityTimeoutMs: number;
   private pruneDoneAgeMs: number;
@@ -167,14 +171,14 @@ export class SqliteQueue<T> {
    * Prioritizes Memory-First buffer over DB polling.
    */
   async dequeueBatch(limit: number): Promise<QueueJob<T>[]> {
-    // Memory-First: Try local buffer first
+    // Memory-First: Try local buffer first (with fast-path status update)
     if (this.pendingMemoryBuffer.length > 0) {
       const jobs = this.pendingMemoryBuffer.splice(0, limit);
       const ids = jobs.map((j) => j.id);
       const nowMs = Date.now();
 
-      // Async update status in DB (no need to wait for transaction if it was in memory)
-      await dbPool.push({
+      // Non-blocking update (doubling down on write-behind)
+      dbPool.push({
         type: 'update',
         table: 'queue_jobs',
         values: {
@@ -184,7 +188,7 @@ export class SqliteQueue<T> {
         },
         where: { column: 'id', value: ids, operator: 'IN' },
         layer: 'infrastructure',
-      });
+      }).catch(err => console.error('[SqliteQueue] Background status update failed:', err));
 
       return jobs.map((job) => ({
         ...job,

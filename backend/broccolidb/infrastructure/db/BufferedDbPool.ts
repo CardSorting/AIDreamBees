@@ -190,7 +190,7 @@ export class BufferedDbPool {
       } else {
         this.globalBuffer.push(...ops);
       }
-      shouldFlush = this.globalBuffer.length > 50;
+      shouldFlush = this.globalBuffer.length > 250; // Increased flush trigger size
     } finally {
       release();
     }
@@ -612,7 +612,8 @@ export class BufferedDbPool {
     if (!firstOp?.values) return 0;
 
     const columnCount = Object.keys(firstOp.values).length || 1;
-    const CHUNK_SIZE = Math.max(1, Math.floor(950 / columnCount));
+    // Pushing SQLite's default parameter limit (32766 in newer versions, using conservative 5000)
+    const CHUNK_SIZE = Math.max(1, Math.floor(5000 / columnCount));
     let flushed = 0;
 
     for (let i = 0; i < group.length; i += CHUNK_SIZE) {
