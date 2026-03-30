@@ -34,9 +34,20 @@ Where do you want to go next? Pick a path that fits your role:
 ## ✨ Features at a Glance
 
 -   **🧠 BroccoliDB Cognitive Substrate**: A private, version-controlled "Digital Brain" for long-term AI memory.
+-   **🚀 High-Performance Infrastructure**: Optimized SQLite persistence with `BufferedDbPool` write-behind and `SqliteQueue` batch processing.
 -   **⚡ Real-Time Resonance**: Instantaneous communication across all your devices using [Soketi WebSockets](https://soketi.app/).
 -   **🎨 Multimodal Alchemy**: High-speed image generation with **Grid Mode** 2x2 synthesis and 4K support.
 -   **🤖 Multi-Platform Orchestration**: Fully integrated Discord and Telegram clients with unified history.
+
+---
+
+## ⚡ High-Performance Core
+
+DreamBeesAI is built for speed and reliability, utilizing a custom infrastructure layer on top of SQLite to handle high-concurrency AI workloads:
+
+-   **BufferedDbPool**: Implements an asynchronous **Write-Behind** strategy, batching database operations to minimize disk I/O and maximize throughput.
+-   **SqliteQueue**: A memory-first background job system that supports pipelined batching (processing 500+ jobs at once) and automatic crash recovery.
+-   **Agent Shadows**: Ensures isolated, consistent state for concurrent AI agents during transactional workflows.
 
 ---
 
