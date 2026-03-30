@@ -5,7 +5,7 @@ import bodyParser from 'body-parser';
 import Pusher from 'pusher';
 import morgan from 'morgan';
 import winston from 'winston';
-import { getAIResponse } from './gemini.js';
+import { getAIResponse, combineToGrid } from './gemini.js';
 import { Message, initDB } from './db.js';
 import dotenv from 'dotenv';
 
@@ -98,7 +98,7 @@ app.delete('/api/history', async (req, res) => {
 
 // --- Real-time Chat API Endpoint (Full Cognitive Substrate) ---
 app.post('/api/chat', async (req, res) => {
-  const { message, images, history } = req.body;
+  const { message, images, history, useGrid } = req.body;
   
   if (!message && (!images || images.length === 0)) {
     return res.status(400).json({ error: "Message or image is required." });
@@ -120,11 +120,20 @@ app.post('/api/chat', async (req, res) => {
     const substrateContext = await searchSubstrate(message);
 
     // 4. Call Gemini API with Augmented Context
-    const resultParts = await getAIResponse(history, message, substrateContext);
+    const resultParts = await getAIResponse(history, message, substrateContext, useGrid);
 
     // 5. Process parts (Text and images)
     const botText = resultParts.filter(p => p.type === 'text').map(p => p.content).join('\n\n');
-    const botImages = resultParts.filter(p => p.type === 'image').map(p => p.content);
+    let botImages = resultParts.filter(p => p.type === 'image').map(p => p.content);
+
+    // 5b. If Grid Mode is active and we have multiple images, combine them
+    if (useGrid && botImages.length > 1) {
+      logger.info(`Combining ${botImages.length} images into a 2x2 grid.`);
+      const gridResult = await combineToGrid(botImages);
+      if (gridResult) {
+        botImages = [gridResult];
+      }
+    }
 
     // 6. Save AI Message & Perform Epistemic Audit in db.js
     const savedBotMsg = await Message.create({

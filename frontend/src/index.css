@@ -95,17 +95,47 @@ body {
 }
 
 .sidebar-section {
-  margin-top: 2rem;
+  margin-top: 1.5rem;
 }
 
 .section-title {
+  padding: 0 12px;
   font-size: 0.75rem;
   font-weight: 600;
   color: #4a4d55;
   text-transform: uppercase;
   letter-spacing: 1px;
-  padding: 0 12px;
-  margin-bottom: 12px;
+  margin-bottom: 8px;
+}
+
+.toggle-switch {
+  width: 32px;
+  height: 18px;
+  background-color: var(--bubble-user);
+  border-radius: 10px;
+  position: relative;
+  transition: background-color 0.3s ease;
+  flex-shrink: 0;
+}
+
+.toggle-switch.on {
+  background-color: var(--accent-color);
+}
+
+.toggle-knob {
+  width: 14px;
+  height: 14px;
+  background-color: #fff;
+  border-radius: 50%;
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  transition: transform 0.3s cubic-bezier(0.68, -0.55, 0.265, 1.55);
+}
+
+.toggle-switch.on .toggle-knob {
+  transform: translateX(14px);
+  background-color: #000;
 }
 
 /* Main Chat Area */

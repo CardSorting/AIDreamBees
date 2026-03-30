@@ -146,14 +146,14 @@ export async function initDB() {
     
     // Services are automatically initialized within AgentContext, but we can configure them if needed.
     
-    // 1. Register the Nano Banana 2 Agent
+    // 1. Register the Nano Banana 2 Agent (Safe initialization via upsert)
     await agentContext.registerAgent('nano-bot-1', 'Nano Banana 2', 'Epistemic Lead', ['reason', 'audit', 'spider', 'suggest']);
 
     // 2. Bootstrap Structural Awareness (Indexing the project)
     console.log('--- 🕷️ Initializing Structural Discovery Service ---');
     await agentContext.spiderService.bootstrapGraph();
     
-    // 3. Cognitive Knowledge Ingestion
+    // 3. Cognitive Knowledge Ingestion (Safe initialization via upsert)
     await ingestProjectKnowledge();
 
     console.log('--- 🥦 BroccoliDB FULL Substrate Initialized ---');

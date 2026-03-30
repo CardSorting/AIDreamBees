@@ -53,7 +53,7 @@ export class GraphService {
 			const edges = options.edges || []
 
 			allOps.push({
-				type: "insert",
+				type: "upsert",
 				table: "knowledge",
 				values: {
 					id,
@@ -73,7 +73,7 @@ export class GraphService {
 
 			for (const edge of edges) {
 				allOps.push({
-					type: "insert",
+					type: "upsert",
 					table: "knowledge_edges",
 					values: {
 						sourceId: id,

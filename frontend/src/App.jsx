@@ -19,6 +19,7 @@ const App = () => {
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
   const [systemHealth, setSystemHealth] = useState({ entropy: 0.1, health: 'Initializing...', violations: 0, nodeCount: 0 });
   const [activeSuggestions, setActiveSuggestions] = useState({}); // itemId -> suggestions[]
+  const [gridMode, setGridMode] = useState(false);
   
   const messagesEndRef = useRef(null);
   const pusherRef = useRef(null);
@@ -170,7 +171,8 @@ const App = () => {
         body: JSON.stringify({ 
           message: userMsg,
           images: userImg ? [userImg] : [],
-          history: messages 
+          history: messages,
+          useGrid: gridMode
         }),
       });
 
@@ -215,6 +217,16 @@ const App = () => {
           <div className="nav-item active"><Sparkles size={18} /><span>Creator Mode</span></div>
           <div className="nav-item" onClick={clearChat}><Trash2 size={18} /><span>Clear Substrate</span></div>
         </nav>
+
+        <div className="sidebar-section">
+          <div className="section-title">Generation Settings</div>
+          <div className={`nav-item ${gridMode ? 'active' : ''}`} onClick={() => setGridMode(!gridMode)}>
+            <div className={`toggle-switch ${gridMode ? 'on' : ''}`}>
+              <div className="toggle-knob"></div>
+            </div>
+            <span>2x2 Grid Mode</span>
+          </div>
+        </div>
 
         <div style={{ marginTop: 'auto' }}>
           <div className="nav-item"><Settings size={18} /><span>Settings</span></div>
