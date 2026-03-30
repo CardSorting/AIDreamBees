@@ -34,7 +34,7 @@ app.use(helmet());
 app.use(morgan('combined', { stream: { write: (message: string) => logger.info(message.trim()) } }));
 app.use(
   cors({
-    origin: 'http://localhost:5173', // Frontend URL
+    origin: ['http://localhost:5173', 'http://localhost:5174'], // Frontend URLs
     credentials: true,
   }),
 );
@@ -111,6 +111,21 @@ app.delete('/api/history', async (_req: Request, res: Response) => {
   } catch (error) {
     logger.error('Failed to purge cognitive substrate:', error);
     res.status(500).json({ error: 'Failed to clear history' });
+  }
+});
+
+app.delete('/api/history/:id', async (req: Request, res: Response) => {
+  const { id } = req.params;
+  try {
+    const deletedCount = await Message.destroy({ where: { id } });
+    if (deletedCount > 0) {
+      res.json({ status: 'success' });
+    } else {
+      res.status(404).json({ error: 'Message not found' });
+    }
+  } catch (error) {
+    logger.error('Failed to delete individual message from substrate:', error);
+    res.status(500).json({ error: 'Failed to delete message' });
   }
 });
 

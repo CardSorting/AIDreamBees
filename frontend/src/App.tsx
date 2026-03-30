@@ -1,12 +1,9 @@
 import {
   AlertCircle,
-  Bee,
-  Bot,
-  Flame,
+  Bug as Bee,
   Image as ImageIcon,
   Send,
   Settings,
-  Sparkles,
   Trash2,
   X,
   Zap,
@@ -276,6 +273,21 @@ const App = () => {
     }
   };
 
+  const deleteMessage = async (id: string) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/api/history/${id}`, {
+        method: 'DELETE',
+      });
+      if (response.ok) {
+        setMessages((prev) => prev.filter((m) => m.id !== id));
+      } else {
+        console.error('Failed to delete message:', response.statusText);
+      }
+    } catch (err) {
+      console.error('Error deleting message:', err);
+    }
+  };
+
   const handleKeyPress = (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Enter' && !e.shiftKey) {
       e.preventDefault();
@@ -332,12 +344,11 @@ const App = () => {
       </aside>
 
       {isSidebarOpen && (
-        <div
+        <button
+          type="button"
           className="sidebar-overlay"
           onClick={() => setIsSidebarOpen(false)}
           onKeyDown={(e) => e.key === 'Escape' && setIsSidebarOpen(false)}
-          role="button"
-          tabIndex={0}
           aria-label="Close sidebar"
         />
       )}
@@ -389,14 +400,24 @@ const App = () => {
           {messages.map((msg) => (
             <div key={msg.id} className={`message-wrapper ${msg.type}`}>
               <div className="message-meta">
-                {msg.type === 'bot' ? (
-                  <Bee size={14} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                ) : null}
-                {msg.type === 'bot' ? 'Swarm Logic' : msg.user} •{' '}
-                {new Date(msg.timestamp).toLocaleTimeString([], {
-                  hour: '2-digit',
-                  minute: '2-digit',
-                })}
+                <div className="meta-info">
+                  {msg.type === 'bot' ? (
+                    <Bee size={14} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+                  ) : null}
+                  {msg.type === 'bot' ? 'Swarm Logic' : msg.user} •{' '}
+                  {new Date(msg.timestamp).toLocaleTimeString([], {
+                    hour: '2-digit',
+                    minute: '2-digit',
+                  })}
+                </div>
+                <button
+                  type="button"
+                  className="delete-msg-btn"
+                  onClick={() => deleteMessage(msg.id)}
+                  title="Delete message"
+                >
+                  <Trash2 size={12} />
+                </button>
               </div>
               <div className={`message ${msg.type}`}>
                 {msg.message}
@@ -424,18 +445,19 @@ const App = () => {
                         {msg.sourceImages && msg.sourceImages.length > 0 && (
                           <div className="upscale-controls">
                             {msg.sourceImages.map((srcImg, idx) => (
-                              <button
-                                key={`${msg.id}-upscale-${idx}`}
-                                className="upscale-btn"
-                                onClick={() =>
-                                  window.open(
-                                    srcImg.startsWith('data:') ? srcImg : `data:image/png;base64,${srcImg}`,
-                                    '_blank',
-                                  )
-                                }
-                              >
-                                U{idx + 1}
-                              </button>
+                        <button
+                          key={`${msg.id}-upscale-${srcImg.substring(0, 32)}`}
+                          type="button"
+                          className="upscale-btn"
+                          onClick={() =>
+                            window.open(
+                              srcImg.startsWith('data:') ? srcImg : `data:image/png;base64,${srcImg}`,
+                              '_blank',
+                            )
+                          }
+                        >
+                          U{idx + 1}
+                        </button>
                             ))}
                           </div>
                         )}
