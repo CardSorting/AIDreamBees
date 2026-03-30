@@ -189,6 +189,23 @@ export interface Schema {
     knowledgeIds: string; // JSON array of contributing knowledge
     timestamp: number;
   };
+  queue_jobs: {
+    id: string;
+    payload: string;
+    status: 'pending' | 'processing' | 'done' | 'failed';
+    priority: number;
+    attempts: number;
+    maxAttempts: number;
+    runAt: number;
+    error: string | null;
+    createdAt: number;
+    updatedAt: number;
+  };
+  queue_settings: {
+    key: string;
+    value: string;
+    updatedAt: number;
+  };
 }
 
 let _db: Kysely<Schema> | null = null;
@@ -460,6 +477,29 @@ export async function getDb(): Promise<Kysely<Schema>> {
   await execute(`CREATE INDEX IF NOT EXISTS idx_edges_target ON knowledge_edges(targetId)`);
   await execute(`CREATE INDEX IF NOT EXISTS idx_decisions_repo ON decisions(repoPath)`);
   await execute(`CREATE INDEX IF NOT EXISTS idx_decisions_task ON decisions(taskId)`);
+
+  // Queue Tables
+  await execute(`CREATE TABLE IF NOT EXISTS queue_jobs (
+    id TEXT PRIMARY KEY,
+    payload TEXT NOT NULL,
+    status TEXT NOT NULL,
+    priority INTEGER DEFAULT 0,
+    attempts INTEGER DEFAULT 0,
+    maxAttempts INTEGER DEFAULT 5,
+    runAt BIGINT,
+    error TEXT,
+    createdAt BIGINT,
+    updatedAt BIGINT
+  )`);
+
+  await execute(`CREATE INDEX IF NOT EXISTS idx_poll_order ON queue_jobs(status, runAt, priority DESC, createdAt ASC)`);
+  await execute(`CREATE INDEX IF NOT EXISTS idx_cleanup ON queue_jobs(status, updatedAt)`);
+
+  await execute(`CREATE TABLE IF NOT EXISTS queue_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT,
+    updatedAt BIGINT
+  )`);
 
   await execute(`CREATE INDEX IF NOT EXISTS idx_agents_user ON agents(userId)`);
   await execute(`CREATE INDEX IF NOT EXISTS idx_knowledge_user ON knowledge(userId)`);

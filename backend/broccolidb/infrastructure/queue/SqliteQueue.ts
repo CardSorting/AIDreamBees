@@ -1,5 +1,5 @@
 import * as crypto from 'node:crypto';
-import Database from 'better-sqlite3';
+import { dbPool, BufferedDbPool } from '../db/BufferedDbPool.js';
 
 export interface QueueJob<T> {
   id: string;
@@ -9,7 +9,7 @@ export interface QueueJob<T> {
   attempts: number;
   maxAttempts: number;
   runAt: number;
-  error?: string;
+  error?: string | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -17,40 +17,17 @@ export interface QueueJob<T> {
 export type JobHandler<T> = (job: QueueJob<T>) => Promise<void>;
 
 export interface SqliteQueueOptions {
-  dbPath?: string;
-  tableName?: string;
-  busyTimeout?: number;
   visibilityTimeoutMs?: number;
   pruneDoneAgeMs?: number;
   defaultMaxAttempts?: number;
   baseRetryDelayMs?: number;
 }
 
-interface JobRow {
-  id: string;
-  payload: string;
-  status: 'pending' | 'processing' | 'done' | 'failed';
-  priority: number;
-  attempts: number;
-  maxAttempts: number;
-  runAt: number;
-  error?: string;
-  createdAt: number;
-  updatedAt: number;
-}
-
-interface CountRow {
-  count: number;
-}
-
 /**
  * SqliteQueue provides a hardened, production-grade background job processor.
- * It ensures "at-least-once" delivery via visibility timeouts and supports
- * priorities, delayed execution, and exponential backoff.
+ * It uses BufferedDbPool for high-throughput, buffered database operations.
  */
 export class SqliteQueue<T> {
-  private db: Database.Database;
-  private tableName: string;
   private isProcessing = false;
   private stopRequested = false;
 
@@ -61,66 +38,22 @@ export class SqliteQueue<T> {
 
   constructor(options: SqliteQueueOptions = {}) {
     const {
-      dbPath = ':memory:',
-      tableName = 'queue_jobs',
-      busyTimeout = 10000,
       visibilityTimeoutMs = 300000, // 5 minutes default
       pruneDoneAgeMs = 86400000, // 24 hours default
       defaultMaxAttempts = 5,
       baseRetryDelayMs = 1000,
     } = options;
 
-    this.db = new Database(dbPath);
-    this.db.pragma(`busy_timeout = ${busyTimeout}`);
-    this.tableName = tableName;
-
     this.visibilityTimeoutMs = visibilityTimeoutMs;
     this.pruneDoneAgeMs = pruneDoneAgeMs;
     this.defaultMaxAttempts = defaultMaxAttempts;
     this.baseRetryDelayMs = baseRetryDelayMs;
-
-    this.init();
-  }
-
-  private init() {
-    this.db.exec(`
-      CREATE TABLE IF NOT EXISTS ${this.tableName} (
-        id TEXT PRIMARY KEY,
-        payload TEXT NOT NULL,
-        status TEXT NOT NULL,
-        priority INTEGER DEFAULT 0,
-        attempts INTEGER DEFAULT 0,
-        maxAttempts INTEGER DEFAULT 5,
-        runAt BIGINT,
-        error TEXT,
-        createdAt BIGINT,
-        updatedAt BIGINT
-      );
-      
-      -- Indices for high-throughput polling
-      CREATE INDEX IF NOT EXISTS idx_poll_order ON ${this.tableName}(status, runAt, priority DESC, createdAt ASC);
-      CREATE INDEX IF NOT EXISTS idx_cleanup ON ${this.tableName}(status, updatedAt);
-
-      -- Coordination table for distributed maintenance
-      CREATE TABLE IF NOT EXISTS queue_settings (
-        key TEXT PRIMARY KEY,
-        value TEXT,
-        updatedAt BIGINT
-      );
-    `);
-
-    // Performance optimizations
-    this.db.pragma('journal_mode = WAL');
-    // Use synchronous = NORMAL for better durability with WAL
-    this.db.pragma('synchronous = NORMAL');
-    this.db.pragma('temp_store = MEMORY');
-    this.db.pragma('mmap_size = 268435456'); // 256MB mmap
   }
 
   /**
    * Enqueue a new job with optional priority and delay.
    */
-  enqueue(
+  async enqueue(
     payload: T,
     options: {
       id?: string;
@@ -128,95 +61,115 @@ export class SqliteQueue<T> {
       delayMs?: number;
       maxAttempts?: number;
     } = {},
-  ): string {
+  ): Promise<string> {
     const jobId = options.id || crypto.randomUUID();
     const now = Date.now();
     const runAt = now + (options.delayMs || 0);
     const maxAttempts = options.maxAttempts ?? this.defaultMaxAttempts;
 
-    const stmt = this.db.prepare(`
-      INSERT INTO ${this.tableName} (id, payload, status, priority, attempts, maxAttempts, runAt, createdAt, updatedAt)
-      VALUES (?, ?, 'pending', ?, 0, ?, ?, ?, ?)
-      ON CONFLICT(id) DO UPDATE SET
-        payload = excluded.payload,
-        status = 'pending',
-        priority = excluded.priority,
-        runAt = excluded.runAt,
-        updatedAt = excluded.updatedAt
-    `);
-
-    stmt.run(jobId, JSON.stringify(payload), options.priority || 0, maxAttempts, runAt, now, now);
+    await dbPool.push({
+      type: 'upsert',
+      table: 'queue_jobs',
+      values: {
+        id: jobId,
+        payload: JSON.stringify(payload),
+        status: 'pending',
+        priority: options.priority || 0,
+        attempts: 0,
+        maxAttempts,
+        runAt,
+        createdAt: now,
+        updatedAt: now,
+        error: null,
+      },
+      where: { column: 'id', value: jobId },
+      layer: 'infrastructure',
+    });
     return jobId;
   }
 
   /**
    * Enqueue multiple jobs in a single transaction for high throughput.
    */
-  enqueueBatch(
+  async enqueueBatch(
     items: { payload: T; priority?: number; delayMs?: number; id?: string }[],
-  ): string[] {
+  ): Promise<string[]> {
     const ids: string[] = [];
     const now = Date.now();
-    const stmt = this.db.prepare(`
-      INSERT INTO ${this.tableName} (id, payload, status, priority, attempts, maxAttempts, runAt, createdAt, updatedAt)
-      VALUES (?, ?, 'pending', ?, 0, ?, ?, ?, ?)
-    `);
-
-    this.db.transaction(() => {
-      for (const item of items) {
-        const jobId = item.id || crypto.randomUUID();
-        const runAt = now + (item.delayMs || 0);
-        ids.push(jobId);
-        stmt.run(
-          jobId,
-          JSON.stringify(item.payload),
-          item.priority || 0,
-          this.defaultMaxAttempts,
+    const ops = items.map((item) => {
+      const jobId = item.id || crypto.randomUUID();
+      const runAt = now + (item.delayMs || 0);
+      ids.push(jobId);
+      return {
+        type: 'insert' as const,
+        table: 'queue_jobs' as const,
+        values: {
+          id: jobId,
+          payload: JSON.stringify(item.payload),
+          status: 'pending' as const,
+          priority: item.priority || 0,
+          attempts: 0,
+          maxAttempts: this.defaultMaxAttempts,
           runAt,
-          now,
-          now,
-        );
-      }
-    })();
+          createdAt: now,
+          updatedAt: now,
+          error: null,
+        },
+        layer: 'infrastructure' as const,
+      };
+    });
+
+    await dbPool.pushBatch(ops);
     return ids;
   }
 
   /**
-   * Dequeue multiple jobs atomically in a single transaction.
-   * Useful for high-throughput consumers that can handle batches.
+   * Dequeue multiple jobs atomically using a transaction.
    */
-  dequeueBatch(limit: number): QueueJob<T>[] {
+  async dequeueBatch(limit: number): Promise<QueueJob<T>[]> {
     const now = Date.now();
     try {
-      return this.db.transaction(() => {
-        const jobs = this.db
-          .prepare(`
-          SELECT * FROM ${this.tableName}
-          WHERE status = 'pending' AND runAt <= ?
-          ORDER BY priority DESC, createdAt ASC
-          LIMIT ?
-        `)
-          .all(now, limit) as JobRow[];
+      return await dbPool.runTransaction(async (agentId) => {
+        const jobs = await dbPool.selectWhere(
+          'queue_jobs',
+          [
+            { column: 'status', value: 'pending' },
+            { column: 'runAt', value: now, operator: '<=' },
+          ],
+          agentId,
+          {
+            orderBy: { column: 'priority', direction: 'desc' },
+            limit,
+          },
+        );
 
         if (jobs.length === 0) return [];
 
         const ids = jobs.map((j) => j.id);
-        this.db
-          .prepare(`
-          UPDATE ${this.tableName}
-          SET status = 'processing', updatedAt = ?, attempts = attempts + 1
-          WHERE id IN (${ids.map(() => '?').join(',')})
-        `)
-          .run(now, ...ids);
+        const nowMs = Date.now();
+        await dbPool.pushBatch(
+          jobs.map((job) => ({
+            type: 'update',
+            table: 'queue_jobs',
+            values: {
+              status: 'processing',
+              updatedAt: nowMs,
+              attempts: BufferedDbPool.increment(1),
+            },
+            where: { column: 'id', value: job.id },
+            layer: 'infrastructure',
+          })),
+          agentId,
+        );
 
         return jobs.map((job) => ({
           ...job,
           payload: JSON.parse(job.payload) as T,
-          updatedAt: now,
+          updatedAt: nowMs,
           attempts: job.attempts + 1,
           status: 'processing' as const,
-        }));
-      })();
+        })) as unknown as QueueJob<T>[];
+      });
     } catch (e) {
       console.error('[SqliteQueue] DequeueBatch failed:', e);
       return [];
@@ -224,108 +177,71 @@ export class SqliteQueue<T> {
   }
 
   /**
-   * Atomic dequeue supporting priority and runAt scheduling.
-   */
-  dequeue(): QueueJob<T> | null {
-    const now = Date.now();
-    try {
-      return this.db.transaction(() => {
-        // Find next eligible job
-        const job = this.db
-          .prepare(`
-          SELECT * FROM ${this.tableName}
-          WHERE status = 'pending' AND runAt <= ?
-          ORDER BY priority DESC, createdAt ASC
-          LIMIT 1
-        `)
-          .get(now) as JobRow | undefined;
-
-        if (!job) return null;
-
-        // Mark as processing
-        this.db
-          .prepare(`
-          UPDATE ${this.tableName}
-          SET status = 'processing', updatedAt = ?, attempts = attempts + 1
-          WHERE id = ?
-        `)
-          .run(now, job.id);
-
-        return {
-          ...job,
-          payload: JSON.parse(job.payload) as T,
-          updatedAt: now,
-          attempts: job.attempts + 1,
-          status: 'processing' as const,
-        };
-      })();
-    } catch (e) {
-      console.error('[SqliteQueue] Dequeue failed:', e);
-      return null;
-    }
-  }
-
-  /**
    * Recovers jobs that were stuck in 'processing' (e.g., process crashed).
    */
-  reclaimStaleJobs(): number {
+  async reclaimStaleJobs(): Promise<number> {
     const now = Date.now();
     const threshold = now - this.visibilityTimeoutMs;
 
-    const result = this.db
-      .prepare(`
-      UPDATE ${this.tableName}
-      SET status = 'pending', updatedAt = ?
-      WHERE status = 'processing' AND updatedAt < ?
-    `)
-      .run(now, threshold);
+    const staleJobs = await dbPool.selectWhere('queue_jobs', [
+      { column: 'status', value: 'processing' },
+      { column: 'updatedAt', value: threshold, operator: '<' },
+    ]);
 
-    if (result.changes > 0) {
-      console.warn(`[SqliteQueue] Reclaimed ${result.changes} stale jobs.`);
-    }
-    return result.changes;
+    if (staleJobs.length === 0) return 0;
+
+    const nowMs = Date.now();
+    await dbPool.pushBatch(
+      staleJobs.map((job) => ({
+        type: 'update',
+        table: 'queue_jobs',
+        values: { status: 'pending', updatedAt: nowMs },
+        where: { column: 'id', value: job.id },
+        layer: 'infrastructure',
+      })),
+    );
+
+    console.warn(`[SqliteQueue] Reclaiming ${staleJobs.length} stale jobs.`);
+    return staleJobs.length;
   }
 
   /**
    * Mark multiple jobs as completed in a single transaction.
    */
-  completeBatch(ids: string[]) {
+  async completeBatch(ids: string[]) {
     if (ids.length === 0) return;
     const now = Date.now();
-    this.db.transaction(() => {
-      const stmt = this.db.prepare(`
-        UPDATE ${this.tableName}
-        SET status = 'done', updatedAt = ?
-        WHERE id = ?
-      `);
-      for (const id of ids) {
-        stmt.run(now, id);
-      }
-    })();
+    await dbPool.pushBatch(
+      ids.map((id) => ({
+        type: 'update',
+        table: 'queue_jobs',
+        values: { status: 'done', updatedAt: now },
+        where: { column: 'id', value: id },
+        layer: 'infrastructure',
+      })),
+    );
   }
 
   /**
    * Completed task handling.
    */
-  complete(id: string) {
+  async complete(id: string) {
     const now = Date.now();
-    this.db
-      .prepare(`
-      UPDATE ${this.tableName}
-      SET status = 'done', updatedAt = ?
-      WHERE id = ?
-    `)
-      .run(now, id);
+    await dbPool.push({
+      type: 'update',
+      table: 'queue_jobs',
+      values: { status: 'done', updatedAt: now },
+      where: { column: 'id', value: id },
+      layer: 'infrastructure',
+    });
   }
 
   /**
    * Failure handling with exponential backoff.
    */
-  fail(id: string, error: string) {
+  async fail(id: string, error: string) {
     const now = Date.now();
-    const job = this.db
-      .prepare(`SELECT attempts, maxAttempts FROM ${this.tableName} WHERE id = ?`)
-      .get(id) as { attempts: number; maxAttempts: number } | undefined;
+    const job = await dbPool.selectOne('queue_jobs', { column: 'id', value: id });
 
     if (!job) return;
 
@@ -334,24 +250,24 @@ export class SqliteQueue<T> {
       const nextDelay = 2 ** (job.attempts - 1) * this.baseRetryDelayMs;
       const nextRun = now + nextDelay;
 
-      this.db
-        .prepare(`
-        UPDATE ${this.tableName}
-        SET status = 'pending', runAt = ?, error = ?, updatedAt = ?
-        WHERE id = ?
-      `)
-        .run(nextRun, error, now, id);
+      await dbPool.push({
+        type: 'update',
+        table: 'queue_jobs',
+        values: { status: 'pending', runAt: nextRun, error, updatedAt: now },
+        where: { column: 'id', value: id },
+        layer: 'infrastructure',
+      });
 
       console.warn(`[SqliteQueue] Job ${id} failed. Retrying in ${nextDelay}ms...`);
     } else {
       // Permanently failed (DLQ-equivalent)
-      this.db
-        .prepare(`
-        UPDATE ${this.tableName}
-        SET status = 'failed', error = ?, updatedAt = ?
-        WHERE id = ?
-      `)
-        .run(error, now, id);
+      await dbPool.push({
+        type: 'update',
+        table: 'queue_jobs',
+        values: { status: 'failed', error, updatedAt: now },
+        where: { column: 'id', value: id },
+        layer: 'infrastructure',
+      });
 
       console.error(`[SqliteQueue] Job ${id} failed permanently after ${job.attempts} attempts.`);
     }
@@ -359,43 +275,57 @@ export class SqliteQueue<T> {
 
   /**
    * Health check and automated maintenance.
-   * Uses a coordination lock to ensure only one process performs maintenance.
    */
-  performMaintenance(): void {
+  async performMaintenance(): Promise<void> {
     const now = Date.now();
 
     try {
-      this.db.transaction(() => {
-        const lastMaint = this.db
-          .prepare(`SELECT value FROM queue_settings WHERE key = 'last_maintenance'`)
-          .get() as { value: string } | undefined;
+      await dbPool.runTransaction(async (agentId) => {
+        const lastMaint = await dbPool.selectOne(
+          'queue_settings',
+          { column: 'key', value: 'last_maintenance' },
+          agentId,
+        );
         if (lastMaint && now - Number(lastMaint.value) < 10000) return; // Only once every 10s
 
-        this.db
-          .prepare(
-            `REPLACE INTO queue_settings (key, value, updatedAt) VALUES ('last_maintenance', ?, ?)`,
-          )
-          .run(String(now), now);
+        await dbPool.push(
+          {
+            type: 'upsert',
+            table: 'queue_settings',
+            values: { key: 'last_maintenance', value: String(now), updatedAt: now },
+            where: { column: 'key', value: 'last_maintenance' },
+            layer: 'infrastructure',
+          },
+          agentId,
+        );
 
         // 1. Reclaim stale jobs
-        this.reclaimStaleJobs();
+        await this.reclaimStaleJobs();
 
         // 2. Prune old 'done' jobs
         const pruneThreshold = now - this.pruneDoneAgeMs;
-        const result = this.db
-          .prepare(`
-          DELETE FROM ${this.tableName}
-          WHERE status = 'done' AND updatedAt < ?
-        `)
-          .run(pruneThreshold);
+        const oldJobs = await dbPool.selectWhere(
+          'queue_jobs',
+          [
+            { column: 'status', value: 'done' },
+            { column: 'updatedAt', value: pruneThreshold, operator: '<' },
+          ],
+          agentId,
+        );
 
-        if (result.changes > 0) {
-          console.log(`[SqliteQueue] Pruned ${result.changes} old completed jobs.`);
+        if (oldJobs.length > 0) {
+          await dbPool.pushBatch(
+            oldJobs.map((j) => ({
+              type: 'delete',
+              table: 'queue_jobs',
+              where: { column: 'id', value: j.id },
+              layer: 'infrastructure',
+            })),
+            agentId,
+          );
+          console.log(`[SqliteQueue] Pruned ${oldJobs.length} old completed jobs.`);
         }
-      })();
-
-      // 3. WAL Checkpoint (Passive) to keep shm/wal sizes small
-      this.db.pragma('wal_checkpoint(PASSIVE)');
+      });
     } catch (e) {
       console.error('[SqliteQueue] Maintenance failed:', e);
     }
@@ -406,9 +336,9 @@ export class SqliteQueue<T> {
    */
   async process(
     handler: JobHandler<T>,
-    options: { concurrency?: number; pollIntervalMs?: number } = {},
+    options: { concurrency?: number; pollIntervalMs?: number; batchSize?: number } = {},
   ) {
-    const { concurrency = 1, pollIntervalMs = 50 } = options;
+    const { concurrency = 1, pollIntervalMs = 50, batchSize = concurrency } = options;
     if (this.isProcessing) return;
     this.isProcessing = true;
     this.stopRequested = false;
@@ -418,14 +348,42 @@ export class SqliteQueue<T> {
 
     const runWorker = async () => {
       while (!this.stopRequested) {
-        const job = this.dequeue();
-        if (job) {
-          try {
-            await handler(job);
-            this.complete(job.id);
-          } catch (err: unknown) {
-            this.fail(job.id, err instanceof Error ? err.message : String(err));
+        // Fetch a batch of jobs to reduce transaction overhead
+        const jobs = await this.dequeueBatch(batchSize);
+
+        if (jobs.length > 0) {
+          // Process the batch in parallel up to the specified concurrency
+          const results = await Promise.allSettled(
+            jobs.map(async (job) => {
+              try {
+                await handler(job);
+                return { id: job.id, success: true as const };
+              } catch (err: unknown) {
+                return {
+                  id: job.id,
+                  success: false as const,
+                  error: err instanceof Error ? err.message : String(err),
+                };
+              }
+            }),
+          );
+
+          const successfulIds: string[] = [];
+          for (const res of results) {
+            if (res.status === 'fulfilled') {
+              if (res.value.success) {
+                successfulIds.push(res.value.id);
+              } else {
+                await this.fail(res.value.id, res.value.error);
+              }
+            }
           }
+
+          // Complete all successful jobs in a single transaction
+          if (successfulIds.length > 0) {
+            await this.completeBatch(successfulIds);
+          }
+
           // Micro-tick for high throughput
           await new Promise((resolve) => setImmediate(resolve));
         } else {
@@ -435,16 +393,15 @@ export class SqliteQueue<T> {
       }
     };
 
-    // Spawn workers
-    const workers = Array.from({ length: concurrency }, () => runWorker());
+    // For simplicity in this implementation, we use one worker that handles its own concurrency via Promise.allSettled
+    const worker = runWorker();
 
     // Cleanup on stop
     const cleanup = () => {
       clearInterval(maintenanceInterval);
     };
 
-    // Allow awaiting the whole process if needed (rare for server apps)
-    Promise.all(workers).then(cleanup).catch(cleanup);
+    worker.then(cleanup).catch(cleanup);
   }
 
   stop() {
@@ -452,41 +409,22 @@ export class SqliteQueue<T> {
     this.isProcessing = false;
   }
 
-  size(): number {
-    return (
-      this.db
-        .prepare(`SELECT COUNT(*) as count FROM ${this.tableName} WHERE status = 'pending'`)
-        .get() as CountRow
-    ).count;
+  async size(): Promise<number> {
+    const pendingJobs = await dbPool.selectWhere('queue_jobs', { column: 'status', value: 'pending' });
+    return pendingJobs.length;
   }
 
-  getMetrics() {
+  async getMetrics() {
+    const allJobs = await dbPool.selectWhere('queue_jobs', []);
     return {
-      pending: (
-        this.db
-          .prepare(`SELECT COUNT(*) as count FROM ${this.tableName} WHERE status = 'pending'`)
-          .get() as CountRow
-      ).count,
-      processing: (
-        this.db
-          .prepare(`SELECT COUNT(*) as count FROM ${this.tableName} WHERE status = 'processing'`)
-          .get() as CountRow
-      ).count,
-      done: (
-        this.db
-          .prepare(`SELECT COUNT(*) as count FROM ${this.tableName} WHERE status = 'done'`)
-          .get() as CountRow
-      ).count,
-      failed: (
-        this.db
-          .prepare(`SELECT COUNT(*) as count FROM ${this.tableName} WHERE status = 'failed'`)
-          .get() as CountRow
-      ).count,
+      pending: allJobs.filter((j) => j.status === 'pending').length,
+      processing: allJobs.filter((j) => j.status === 'processing').length,
+      done: allJobs.filter((j) => j.status === 'done').length,
+      failed: allJobs.filter((j) => j.status === 'failed').length,
     };
   }
 
-  close() {
+  async close() {
     this.stop();
-    this.db.close();
   }
 }
