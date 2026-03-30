@@ -22,7 +22,7 @@ export class AuditService {
   }
 
   async predictEffect(kbId: string): Promise<ImpactReport> {
-    const node = await this.graph.getKnowledge(kbId);
+    await this.graph.getKnowledge(kbId);
     const contradictions = await this.reasoning.detectContradictions(kbId, 2);
 
     const isValid = contradictions.length === 0;

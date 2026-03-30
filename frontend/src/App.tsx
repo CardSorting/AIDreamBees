@@ -15,7 +15,15 @@ import {
   X,
 } from 'lucide-react';
 import Pusher from 'pusher-js';
-import React, { Component, type ErrorInfo, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
+import React, {
+  Component,
+  type ErrorInfo,
+  type ReactNode,
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+} from 'react';
 import SettingsModal from './components/settings/SettingsModal';
 import { API_BASE_URL, SOKETI_CONFIG, UI_FEATURES } from './config';
 import { loadMessagesLocal, saveMessagesLocal } from './utils/persistence';
@@ -79,7 +87,9 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
         <div className="error-fallback">
           <h3>Neural Rendering Halted</h3>
           <p>A cognitive anomaly was detected in the stream.</p>
-          <button type="button" onClick={() => window.location.reload()}>Re-initialize Uplink</button>
+          <button type="button" onClick={() => window.location.reload()}>
+            Re-initialize Uplink
+          </button>
         </div>
       );
     }
@@ -104,10 +114,14 @@ const App = () => {
     nodeCount: 0,
     substrateStability: 0.99,
   });
-  
+
   const lastSequenceIdRef = useRef<number>(0);
-  const pollingIntervalRef = useRef<any>(null);
-  const [heartbeat, setHeartbeat] = useState<{ status: 'healthy' | 'warning' | 'critical', latency?: number, isPolling?: boolean }>({ status: 'healthy' });
+  const pollingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const [heartbeat, setHeartbeat] = useState<{
+    status: 'healthy' | 'warning' | 'critical';
+    latency?: number;
+    isPolling?: boolean;
+  }>({ status: 'healthy' });
   const [relativeSyncTime, setRelativeSyncTime] = useState('just now');
   const [gridMode, setGridMode] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -116,61 +130,64 @@ const App = () => {
   const pusherRef = useRef<Pusher | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  const bootstrap = useCallback(async (isReconnect = false) => {
-    try {
-      if (!isReconnect && messages.length === 0) {
-        setIsHistoryLoading(true);
-        // Warm Start Logic (Pass 3)
-        const localHistory = await loadMessagesLocal();
-        if (localHistory.length > 0) {
-          setMessages(localHistory as Message[]);
-          setIsHistoryLoading(false);
+  const bootstrap = useCallback(
+    async (isReconnect = false) => {
+      try {
+        if (!isReconnect && messages.length === 0) {
+          setIsHistoryLoading(true);
+          // Warm Start Logic (Pass 3)
+          const localHistory = await loadMessagesLocal();
+          if (localHistory.length > 0) {
+            setMessages(localHistory as Message[]);
+            setIsHistoryLoading(false);
+          }
+        }
+
+        const [histRes, healthRes] = await Promise.all([
+          fetch(`${API_BASE_URL}/api/history`),
+          fetch(`${API_BASE_URL}/api/health`),
+        ]);
+
+        if (histRes.ok) {
+          const data = await histRes.json();
+          if (data.length > 0) {
+            setMessages(data);
+            saveMessagesLocal(data); // Persist update
+          } else if (!isReconnect && messages.length === 0) {
+            setMessages([
+              {
+                id: 'init-1',
+                user: 'DreamBeesAI',
+                message: 'Hive Managed Substrate Online. Awaiting neural synchronization.',
+                type: 'bot',
+                timestamp: new Date().toISOString(),
+                images: [],
+                soundness: 1.0,
+                isGrounded: true,
+              },
+            ]);
+          }
+        }
+
+        if (healthRes.ok) {
+          const health = await healthRes.json();
+          setSystemHealth((prev) => ({ ...prev, ...health, lastSync: Date.now() }));
+        }
+        setErrorStatus(null);
+      } catch (err) {
+        console.error('Bootstrap error:', err);
+        setErrorStatus('Hive synchronization failure. Retrying connection...');
+        if (!isReconnect) {
+          setTimeout(() => bootstrap(), 5000);
+        }
+      } finally {
+        if (!isReconnect) {
+          setTimeout(() => setIsHistoryLoading(false), 800);
         }
       }
-      
-      const [histRes, healthRes] = await Promise.all([
-        fetch(`${API_BASE_URL}/api/history`),
-        fetch(`${API_BASE_URL}/api/health`),
-      ]);
-
-      if (histRes.ok) {
-        const data = await histRes.json();
-        if (data.length > 0) {
-          setMessages(data);
-          saveMessagesLocal(data); // Persist update
-        } else if (!isReconnect && messages.length === 0) {
-          setMessages([
-            {
-              id: 'init-1',
-              user: 'DreamBeesAI',
-              message: 'Hive Managed Substrate Online. Awaiting neural synchronization.',
-              type: 'bot',
-              timestamp: new Date().toISOString(),
-              images: [],
-              soundness: 1.0,
-              isGrounded: true,
-            },
-          ]);
-        }
-      }
-
-      if (healthRes.ok) {
-        const health = await healthRes.json();
-        setSystemHealth(prev => ({ ...prev, ...health, lastSync: Date.now() }));
-      }
-      setErrorStatus(null);
-    } catch (err) {
-      console.error('Bootstrap error:', err);
-      setErrorStatus('Hive synchronization failure. Retrying connection...');
-      if (!isReconnect) {
-        setTimeout(() => bootstrap(), 5000);
-      }
-    } finally {
-      if (!isReconnect) {
-        setTimeout(() => setIsHistoryLoading(false), 800);
-      }
-    }
-  }, [messages.length]);
+    },
+    [messages.length],
+  );
 
   // --- Initial Bootstrap ---
   useEffect(() => {
@@ -221,7 +238,7 @@ const App = () => {
       if (states.current === 'unavailable' || states.current === 'failed') {
         setErrorStatus('Bridge connection lost. Initializing long-polling fallback...');
         setHeartbeat({ status: 'critical', isPolling: true });
-        
+
         // Long-Polling Fallback (Pass 3)
         if (!pollingIntervalRef.current) {
           pollingIntervalRef.current = setInterval(() => {
@@ -237,11 +254,13 @@ const App = () => {
 
     const handleSequence = (incomingSeq: number) => {
       if (lastSequenceIdRef.current > 0 && incomingSeq > lastSequenceIdRef.current + 1) {
-        console.warn(`[SYNC GAP] Detected sequence jump: ${lastSequenceIdRef.current} -> ${incomingSeq}. Triggering full re-sync.`);
+        console.warn(
+          `[SYNC GAP] Detected sequence jump: ${lastSequenceIdRef.current} -> ${incomingSeq}. Triggering full re-sync.`,
+        );
         bootstrap(true);
       }
       lastSequenceIdRef.current = incomingSeq;
-      setSystemHealth(prev => ({ ...prev, lastSync: Date.now() }));
+      setSystemHealth((prev) => ({ ...prev, lastSync: Date.now() }));
     };
 
     channel.bind('bot-message', (data: BotMessageData & { sequenceId: number }) => {
@@ -262,7 +281,7 @@ const App = () => {
               isGrounded: data.isGrounded || true,
             },
           ];
-          saveMessagesLocal(newMessages); 
+          saveMessagesLocal(newMessages);
           return newMessages;
         });
       } catch (e) {
@@ -270,33 +289,36 @@ const App = () => {
       }
     });
 
-    channel.bind('substrate-suggestions', (data: { suggestions: Suggestion[], sequenceId?: number }) => {
-      try {
-        if (data.sequenceId) handleSequence(data.sequenceId);
-        setMessages((prev) => {
-          const lastBot = [...prev].reverse().find((m) => m.type === 'bot');
-          if (lastBot) {
-            return prev.map((m) =>
-              m.id === lastBot.id ? { ...m, suggestions: data.suggestions } : m,
-            );
-          }
-          return prev;
-        });
-      } catch (e) {
-        console.error('Failed to process substrate-suggestions:', e);
-      }
-    });
+    channel.bind(
+      'substrate-suggestions',
+      (data: { suggestions: Suggestion[]; sequenceId?: number }) => {
+        try {
+          if (data.sequenceId) handleSequence(data.sequenceId);
+          setMessages((prev) => {
+            const lastBot = [...prev].reverse().find((m) => m.type === 'bot');
+            if (lastBot) {
+              return prev.map((m) =>
+                m.id === lastBot.id ? { ...m, suggestions: data.suggestions } : m,
+              );
+            }
+            return prev;
+          });
+        } catch (e) {
+          console.error('Failed to process substrate-suggestions:', e);
+        }
+      },
+    );
 
-    channel.bind('system-update', (data: { health: SystemHealth, sequenceId: number }) => {
+    channel.bind('system-update', (data: { health: SystemHealth; sequenceId: number }) => {
       try {
         if (data.sequenceId) handleSequence(data.sequenceId);
-        setSystemHealth(prev => ({ ...prev, ...data.health }));
+        setSystemHealth((prev) => ({ ...prev, ...data.health }));
       } catch (e) {
         console.error('Failed to process system-update:', e);
       }
     });
 
-    channel.bind('bot-thinking', (data: { isThinking: boolean, sequenceId?: number }) => {
+    channel.bind('bot-thinking', (data: { isThinking: boolean; sequenceId?: number }) => {
       try {
         if (data.sequenceId) handleSequence(data.sequenceId);
         setIsThinking(data.isThinking);
@@ -363,14 +385,16 @@ const App = () => {
     if (window.confirm('IRREVERSIBLE: Purge all cognitive history from substrate?')) {
       try {
         await fetch(`${API_BASE_URL}/api/history`, { method: 'DELETE' });
-        setMessages([{
-          id: 'purge-1',
-          user: 'DreamBeesAI',
-          message: 'Substrate purged. Fresh synchronization initiated.',
-          type: 'bot',
-          timestamp: new Date().toISOString(),
-          images: [],
-        }]);
+        setMessages([
+          {
+            id: 'purge-1',
+            user: 'DreamBeesAI',
+            message: 'Substrate purged. Fresh synchronization initiated.',
+            type: 'bot',
+            timestamp: new Date().toISOString(),
+            images: [],
+          },
+        ]);
       } catch (err) {
         console.error('Purge failed:', err);
       }
@@ -445,8 +469,8 @@ const App = () => {
                 <div className="monitor-cell">
                   <span className="cell-label">STABILITY</span>
                   <span className="cell-value">
-                    {systemHealth.substrateStability 
-                      ? `${(systemHealth.substrateStability * 100).toFixed(1)}%` 
+                    {systemHealth.substrateStability
+                      ? `${(systemHealth.substrateStability * 100).toFixed(1)}%`
                       : 'N/A'}
                   </span>
                 </div>
@@ -455,17 +479,19 @@ const App = () => {
                   <span className="cell-value">{relativeSyncTime}</span>
                 </div>
               </div>
-              
+
               <div className="heartbeat-monitor">
                 <div className={`heartbeat-dot ${heartbeat.status}`} />
-                <span className="heartbeat-label">Substrate Heartbeat: {heartbeat.status.toUpperCase()}</span>
+                <span className="heartbeat-label">
+                  Substrate Heartbeat: {heartbeat.status.toUpperCase()}
+                </span>
               </div>
               <div className="health-bar-container">
-                <motion.div 
+                <motion.div
                   className="health-bar-fill"
                   initial={{ width: 0 }}
-                  animate={{ width: `${100 - (systemHealth.entropy * 100)}%` }}
-                  transition={{ duration: 1.5, ease: "easeOut" }}
+                  animate={{ width: `${100 - systemHealth.entropy * 100}%` }}
+                  transition={{ duration: 1.5, ease: 'easeOut' }}
                 />
               </div>
             </div>
@@ -484,13 +510,15 @@ const App = () => {
               {isSidebarOpen ? <X size={20} /> : <Bee size={22} />}
             </button>
             <div className="sync-badge">
-              <div className={`sync-dot ${connectionStatus === 'connected' ? 'synced' : connectionStatus === 'unavailable' || connectionStatus === 'failed' ? 'error' : 'pulsing'}`} />
+              <div
+                className={`sync-dot ${connectionStatus === 'connected' ? 'synced' : connectionStatus === 'unavailable' || connectionStatus === 'failed' ? 'error' : 'pulsing'}`}
+              />
               <span className="sync-text">
-                {connectionStatus === 'connected' 
-                  ? 'UPLINK ESTABLISHED' 
+                {connectionStatus === 'connected'
+                  ? 'UPLINK ESTABLISHED'
                   : connectionStatus === 'unavailable' || connectionStatus === 'failed'
-                  ? 'UPLINK SEVERED'
-                  : 'SYNCING HIVE...'}
+                    ? 'UPLINK SEVERED'
+                    : 'SYNCING HIVE...'}
               </span>
             </div>
           </div>
@@ -520,20 +548,30 @@ const App = () => {
                       key={msg.id}
                       initial={{ opacity: 0, y: 20 }}
                       animate={{ opacity: 1, y: 0 }}
-                      transition={{ duration: 0.4, ease: "easeOut" }}
+                      transition={{ duration: 0.4, ease: 'easeOut' }}
                       className={`message-row ${msg.type}`}
                     >
                       <div className="message-envelope">
                         <div className="message-header">
                           <div className="sender-info">
                             {msg.type === 'bot' ? <Bee size={14} className="bot-icon" /> : null}
-                            <span className="sender-name">{msg.type === 'bot' ? 'HIVE LOGIC' : 'NEURAL UPLINK'}</span>
-                            <span className="timestamp">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                            <span className="sender-name">
+                              {msg.type === 'bot' ? 'HIVE LOGIC' : 'NEURAL UPLINK'}
+                            </span>
+                            <span className="timestamp">
+                              {new Date(msg.timestamp).toLocaleTimeString([], {
+                                hour: '2-digit',
+                                minute: '2-digit',
+                              })}
+                            </span>
                           </div>
                           {msg.type === 'bot' && UI_FEATURES.SOUNDNESS_BADGES_ENABLED && (
                             <div className="audit-badges">
                               {msg.isGrounded && (
-                                <div className="badge grounded" title="Grounding verified via substrate">
+                                <div
+                                  className="badge grounded"
+                                  title="Grounding verified via substrate"
+                                >
                                   <Database size={10} />
                                   <span>GROUNDED</span>
                                 </div>
@@ -547,25 +585,43 @@ const App = () => {
                         </div>
                         <div className="message-bubble">
                           {msg.message}
-                          
+
                           {msg.images && msg.images.length > 0 && (
                             <div className="image-grid-refined">
                               {msg.images.map((img, idx) => (
-                                <div key={`${msg.id}-img-${img.substring(0, 32)}`} className="image-frame">
+                                <div
+                                  key={`${msg.id}-img-${img.substring(0, 32)}`}
+                                  className="image-frame"
+                                >
                                   <button
                                     type="button"
                                     className="image-btn-wrapper"
-                                    onClick={() => window.open(img.startsWith('data:') ? img : `data:image/png;base64,${img}`, '_blank')}
+                                    onClick={() =>
+                                      window.open(
+                                        img.startsWith('data:')
+                                          ? img
+                                          : `data:image/png;base64,${img}`,
+                                        '_blank',
+                                      )
+                                    }
                                   >
-                                    <img 
-                                      src={img.startsWith('data:') ? img : `data:image/png;base64,${img}`} 
-                                      alt="Cognitive Synthesis" 
+                                    <img
+                                      src={
+                                        img.startsWith('data:')
+                                          ? img
+                                          : `data:image/png;base64,${img}`
+                                      }
+                                      alt="Cognitive Synthesis"
                                     />
                                   </button>
                                   {msg.sourceImages && msg.sourceImages.length > 1 && (
                                     <div className="image-meta-overlay">
                                       <span className="multiplex-tag">COMB #{idx + 1}</span>
-                                      <button type="button" className="expand-btn" onClick={() => window.open(img, '_blank')}>
+                                      <button
+                                        type="button"
+                                        className="expand-btn"
+                                        onClick={() => window.open(img, '_blank')}
+                                      >
                                         <ExternalLink size={12} />
                                       </button>
                                     </div>
@@ -578,7 +634,12 @@ const App = () => {
                           {msg.suggestions && (
                             <div className="suggestion-uplink">
                               {msg.suggestions.map((s) => (
-                                <button key={s.id} type="button" className="suggestion-tag" onClick={() => setInputValue(s.action)}>
+                                <button
+                                  key={s.id}
+                                  type="button"
+                                  className="suggestion-tag"
+                                  onClick={() => setInputValue(s.action)}
+                                >
                                   {s.label}
                                 </button>
                               ))}
@@ -592,9 +653,9 @@ const App = () => {
               )}
 
               {isThinking && (
-                <motion.div 
-                  initial={{ opacity: 0 }} 
-                  animate={{ opacity: 1 }} 
+                <motion.div
+                  initial={{ opacity: 0 }}
+                  animate={{ opacity: 1 }}
                   className="message-row bot"
                 >
                   <div className="thinking-resonance">
@@ -625,17 +686,27 @@ const App = () => {
 
           <div className="input-wrapper">
             <div className="input-actions-left">
-              <button type="button" className="action-icon" onClick={() => fileInputRef.current?.click()}>
+              <button
+                type="button"
+                className="action-icon"
+                onClick={() => fileInputRef.current?.click()}
+              >
                 <ImageIcon size={20} />
               </button>
-              <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept="image/*" onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) {
-                  const reader = new FileReader();
-                  reader.onloadend = () => setSelectedImage(reader.result as string);
-                  reader.readAsDataURL(file);
-                }
-              }} />
+              <input
+                type="file"
+                ref={fileInputRef}
+                style={{ display: 'none' }}
+                accept="image/*"
+                onChange={(e) => {
+                  const file = e.target.files?.[0];
+                  if (file) {
+                    const reader = new FileReader();
+                    reader.onloadend = () => setSelectedImage(reader.result as string);
+                    reader.readAsDataURL(file);
+                  }
+                }}
+              />
             </div>
 
             <textarea
@@ -660,7 +731,11 @@ const App = () => {
             {selectedImage && (
               <div className="image-preview-mini">
                 <img src={selectedImage} alt="Neural Source" />
-                <button type="button" className="remove-preview" onClick={() => setSelectedImage(null)}>
+                <button
+                  type="button"
+                  className="remove-preview"
+                  onClick={() => setSelectedImage(null)}
+                >
                   <X size={10} />
                 </button>
               </div>

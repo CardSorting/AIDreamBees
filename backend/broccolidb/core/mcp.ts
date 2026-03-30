@@ -2,6 +2,7 @@ import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 import { z } from 'zod';
 import type { AgentContext, TraversalFilter } from './agent-context.js';
+import type { GraphEdge, KnowledgeBaseItem } from './agent-context/types.js';
 import { executor } from './executor.js';
 import type { Repository } from './repository.js';
 import { EnvironmentTracker, telemetryQueue } from './tracker.js';
@@ -27,7 +28,7 @@ export class BroccoliDBMCP {
     setInterval(
       () => {
         this.cleanupExpiredBranches().catch((err) =>
-          console.error('[AgentGit][Lifecycle] Cleanup failed:', err),
+          console.error(`[AgentGit][Lifecycle] Cleanup failed: ${err}`),
         );
       },
       15 * 60 * 1000,
@@ -47,7 +48,7 @@ export class BroccoliDBMCP {
       console.log(`[AgentGit][Lifecycle] Self-destructing expired ghost branch: ${branch.name}`);
       try {
         await this.repo.deleteBranch(branch.name);
-      } catch (err) {
+      } catch (_err) {
         // Already gone
       }
     }
@@ -61,17 +62,19 @@ export class BroccoliDBMCP {
       const result = await executor.execute(`mcp:${name}`, op);
       const text = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
       return { content: [{ type: 'text', text }] };
-    } catch (e: any) {
+    } catch (e: unknown) {
+      const err = e as { code?: string; message?: string };
       let advice = '';
-      if (e.code === 'MERGE_CONFLICT')
+      if (err.code === 'MERGE_CONFLICT')
         advice = '\nTIP: Use `broccolidb_list_files` to inspect conflicts and resolve manually.';
-      if (e.code === 'FILE_LOCKED')
+      if (err.code === 'FILE_LOCKED')
         advice = '\nTIP: Wait for the lock to expire or ask the owning agent to release it.';
-      if (e.code === 'BUDGET_EXCEEDED')
+      if (err.code === 'BUDGET_EXCEEDED')
         advice = '\nTIP: This task is too expensive. Consider breaking it into smaller sub-tasks.';
 
+      const message = err.message || String(e);
       return {
-        content: [{ type: 'text', text: `[BroccoliDB][${name}] Error: ${e.message}${advice}` }],
+        content: [{ type: 'text', text: `[BroccoliDB][${name}] Error: ${message}${advice}` }],
         isError: true,
       };
     }
@@ -167,7 +170,8 @@ export class BroccoliDBMCP {
         return this.executeTool('checkout', async () => {
           const logs = await this.repo.log(args.branch, { limit: 1 });
           if (logs.length === 0) return `Branch empty or not found.`;
-          const latest = logs[0]!;
+          const latest = logs[0];
+          if (!latest) return `Branch empty or not found.`;
           return `Currently at commit ${latest.id} by ${latest.author || 'System'}\nMessage: ${latest.message || 'No message'}`;
         });
       },
@@ -198,7 +202,9 @@ export class BroccoliDBMCP {
       },
       async (args) => {
         return this.executeTool('history', async () => {
-          const options: any = { limit: args.limit };
+          const options: { limit: number; author?: string; messageRegex?: string } = {
+            limit: args.limit,
+          };
           if (args.author) options.author = args.author;
           if (args.messageRegex) options.messageRegex = args.messageRegex;
 
@@ -207,7 +213,9 @@ export class BroccoliDBMCP {
             history
               .map(
                 (h) =>
-                  `[${h.id.substring(0, 7)}] ${h.author}: ${h.message} (${new Date(h.timestamp).toISOString()})`,
+                  `[${h.id.substring(0, 7)}] ${h.author}: ${h.message} (${new Date(
+                    h.timestamp,
+                  ).toISOString()})`,
               )
               .join('\n') || 'No history found matching criteria.'
           );
@@ -418,7 +426,7 @@ export class BroccoliDBMCP {
           let mermaid = 'graph TD\n';
           for (const step of pedigree.lineage) {
             const shortId = step.nodeId.substring(0, 7);
-            const content = step.content.substring(0, 30).replace(/"/g, "'") + '...';
+            const content = `${step.content.substring(0, 30).replace(/"/g, "'")}...`;
             mermaid += `  ${shortId}["${shortId} (${step.type})<br/>${content}"]\n`;
           }
 
@@ -468,15 +476,16 @@ export class BroccoliDBMCP {
       },
       async (args) => {
         return this.executeTool('compress_history', async () => {
-          let parsedData: any;
+          let parsedData: Record<string, unknown>;
           try {
             parsedData = JSON.parse(args.summaryData);
             // Basic structural validation
             if (typeof parsedData !== 'object' || parsedData === null) {
               throw new Error('summaryData must be a JSON object');
             }
-          } catch (e: any) {
-            throw new Error(`Invalid summaryData JSON: ${e.message}`);
+          } catch (e: unknown) {
+            const message = e instanceof Error ? e.message : String(e);
+            throw new Error(`Invalid summaryData JSON: ${message}`);
           }
           const commitId = await this.repo.summarize(
             args.branch,
@@ -533,7 +542,7 @@ export class BroccoliDBMCP {
       async (args) => {
         return this.executeTool('time_travel', async () => {
           const date = new Date(args.timestamp);
-          if (isNaN(date.getTime())) throw new Error('Invalid ISO timestamp');
+          if (Number.isNaN(date.getTime())) throw new Error('Invalid ISO timestamp');
           const recoveryId = await this.repo.timeTravel(args.branch, date, args.author);
           return `Time travel successful. Branch rolled back to node: ${recoveryId}`;
         });
@@ -660,6 +669,7 @@ export class BroccoliDBMCP {
     );
 
     if (this.agentContext) {
+      const context = this.agentContext;
       this.server.tool(
         'broccolidb_add_knowledge',
         'Add a new node to the Knowledge Graph',
@@ -690,15 +700,10 @@ export class BroccoliDBMCP {
             if (args.edgesJson) {
               edgesArray = JSON.parse(args.edgesJson);
             }
-            const newId = await this.agentContext!.addKnowledge(
-              args.kbId,
-              args.type,
-              args.content,
-              {
-                tags: tagsArray,
-                edges: edgesArray,
-              },
-            );
+            const newId = await context.addKnowledge(args.kbId, args.type, args.content, {
+              tags: tagsArray,
+              edges: edgesArray,
+            });
             return `Successfully added knowledge graph node: ${newId}`;
           });
         },
@@ -727,25 +732,31 @@ export class BroccoliDBMCP {
         },
         async (args) => {
           return this.executeTool('kb_search', async () => {
-            const results = await this.agentContext!.searchKnowledge(
-              args.query,
-              args.tags
-                ? args.tags
-                    .split(',')
-                    .map((t) => t.trim())
-                    .filter(Boolean)
-                : undefined,
-              args.limit,
-              args.queryEmbeddingJson ? JSON.parse(args.queryEmbeddingJson) : undefined,
-              { augmentWithGraph: args.augmentWithGraph },
-            );
-            const formatted = results
-              .map(
-                (r: any) =>
-                  `[Node: ${r.itemId}] ${r.content}\nMetadata: ${JSON.stringify({ type: r.type, confidence: r.confidence, tags: r.tags, edges: r.edges, inboundEdges: r.inboundEdges })}`,
-              )
-              .join('\n---\n');
-            return formatted || 'No knowledge nodes found for this query.';
+          const results = await context.searchKnowledge(
+            args.query,
+            args.tags
+              ? args.tags
+                  .split(',')
+                  .map((t) => t.trim())
+                  .filter(Boolean)
+              : undefined,
+            args.limit,
+            args.queryEmbeddingJson ? JSON.parse(args.queryEmbeddingJson) : undefined,
+            { augmentWithGraph: args.augmentWithGraph },
+          );
+          const formatted = results
+            .map(
+              (r: KnowledgeBaseItem) =>
+                `[Node: ${r.itemId}] ${r.content}\nMetadata: ${JSON.stringify({
+                  type: r.type,
+                  confidence: r.confidence,
+                  tags: r.tags,
+                  edges: r.edges,
+                  inboundEdges: r.inboundEdges,
+                })}`,
+            )
+            .join('\n---\n');
+          return formatted || 'No knowledge nodes found for this query.';
           });
         },
       );
@@ -775,18 +786,14 @@ export class BroccoliDBMCP {
         },
         async (args) => {
           return this.executeTool('kb_query', async () => {
-            const filter: TraversalFilter = { direction: args.direction as any };
+            const filter: TraversalFilter = { direction: args.direction };
             if (args.edgeTypes) {
-              filter.edgeTypes = args.edgeTypes.split(',').map((t) => t.trim()) as any[];
+              filter.edgeTypes = args.edgeTypes.split(',').map((t) => t.trim()) as GraphEdge['type'][];
             }
             if (args.minWeight !== undefined) {
               filter.minWeight = args.minWeight;
             }
-            const results = await this.agentContext!.traverseGraph(
-              args.kbId,
-              args.maxDepth,
-              filter,
-            );
+            const results = await context.traverseGraph(args.kbId, args.maxDepth, filter);
             return JSON.stringify(results, null, 2);
           });
         },
@@ -800,7 +807,7 @@ export class BroccoliDBMCP {
         },
         async (args) => {
           return this.executeTool('get_agent_bundle', async () => {
-            const bundle = await this.agentContext!.getAgentBundle(args.agentId);
+            const bundle = await context.getAgentBundle(args.agentId);
             return JSON.stringify(bundle, null, 2);
           });
         },
@@ -815,7 +822,7 @@ export class BroccoliDBMCP {
         },
         async (args) => {
           return this.executeTool('append_memory_layer', async () => {
-            await this.agentContext!.appendMemoryLayer(args.agentId, args.memory);
+            await context.appendMemoryLayer(args.agentId, args.memory);
             return `Successfully appended memory to ${args.agentId}'s memory layer.`;
           });
         },
@@ -831,7 +838,7 @@ export class BroccoliDBMCP {
         },
         async (args) => {
           return this.executeTool('append_shared_memory', async () => {
-            await this.agentContext!.appendSharedMemory(args.memory);
+            await context.appendSharedMemory(args.memory);
             return `Successfully appended memory to the swarm-wide shared rulebook.`;
           });
         },
@@ -854,7 +861,7 @@ export class BroccoliDBMCP {
             const kbIds = args.linkedKnowledgeIds
               ? args.linkedKnowledgeIds.split(',').map((id) => id.trim())
               : [];
-            await this.agentContext!.spawnTask(args.taskId, args.agentId, args.description, kbIds);
+            await context.spawnTask(args.taskId, args.agentId, args.description, kbIds);
             return `Task '${args.taskId}' spawned successfully.`;
           });
         },
@@ -868,8 +875,8 @@ export class BroccoliDBMCP {
         },
         async (args) => {
           return this.executeTool('get_task_context', async () => {
-            const context = await this.agentContext!.getTaskContext(args.taskId);
-            return JSON.stringify(context, null, 2);
+            const taskContext = await context.getTaskContext(args.taskId);
+            return JSON.stringify(taskContext, null, 2);
           });
         },
       );
@@ -891,7 +898,7 @@ export class BroccoliDBMCP {
         },
         async (args) => {
           return this.executeTool('update_knowledge', async () => {
-            const patch: any = {};
+            const patch: Record<string, unknown> = {};
             if (args.content !== undefined) patch.content = args.content;
             if (args.tags !== undefined)
               patch.tags = args.tags
@@ -900,7 +907,7 @@ export class BroccoliDBMCP {
                 .filter(Boolean);
             if (args.edgesJson !== undefined) patch.edges = JSON.parse(args.edgesJson);
             if (args.confidence !== undefined) patch.confidence = args.confidence;
-            await this.agentContext!.updateKnowledge(args.kbId, patch);
+            await context.updateKnowledge(args.kbId, patch);
             return `Successfully updated knowledge node: ${args.kbId}`;
           });
         },
@@ -914,7 +921,7 @@ export class BroccoliDBMCP {
         },
         async (args) => {
           return this.executeTool('kb_register', async () => {
-            await this.agentContext!.deleteKnowledge(args.kbId);
+            await context.deleteKnowledge(args.kbId);
             return `Successfully deleted knowledge node: ${args.kbId}`;
           });
         },
@@ -931,7 +938,7 @@ export class BroccoliDBMCP {
         },
         async (args) => {
           return this.executeTool('kb_link', async () => {
-            await this.agentContext!.mergeKnowledge(args.sourceId, args.targetId);
+            await context.mergeKnowledge(args.sourceId, args.targetId);
             return `Successfully merged ${args.sourceId} into ${args.targetId}. Source deleted.`;
           });
         },
@@ -947,7 +954,7 @@ export class BroccoliDBMCP {
         },
         async (args) => {
           return this.executeTool('node_centrality', async () => {
-            const result = await this.agentContext!.getNodeCentrality(args.kbId);
+            const result = await context.getNodeCentrality(args.kbId);
             return `Node: ${result.kbId}\nInbound Edges: ${result.inbound}\nOutbound Edges: ${result.outbound}\nTotal Degree Centrality: ${result.totalDegree}`;
           });
         },
@@ -968,15 +975,11 @@ export class BroccoliDBMCP {
         },
         async (args) => {
           return this.executeTool('extract_subgraph', async () => {
-            const filter: TraversalFilter = { direction: args.direction as any };
+            const filter: TraversalFilter = { direction: args.direction };
             if (args.edgeTypes) {
-              filter.edgeTypes = args.edgeTypes.split(',').map((t) => t.trim()) as any[];
+              filter.edgeTypes = args.edgeTypes.split(',').map((t) => t.trim()) as GraphEdge['type'][];
             }
-            const subgraph = await this.agentContext!.extractSubgraph(
-              args.rootId,
-              args.maxDepth,
-              filter,
-            );
+            const subgraph = await context.extractSubgraph(args.rootId, args.maxDepth, filter);
             return JSON.stringify(subgraph, null, 2);
           });
         },
@@ -998,8 +1001,8 @@ export class BroccoliDBMCP {
         async (args) => {
           return this.executeTool('decay_confidence', async () => {
             const olderThan = new Date(args.olderThanIso);
-            if (isNaN(olderThan.getTime())) throw new Error('Invalid ISO timestamp');
-            const result = await this.agentContext!.decayConfidence(args.factor, olderThan);
+            if (Number.isNaN(olderThan.getTime())) throw new Error('Invalid ISO timestamp');
+            const result = await context.decayConfidence(args.factor, olderThan);
             return `Confidence decay applied. ${result.decayedCount} nodes affected.`;
           });
         },
@@ -1015,9 +1018,9 @@ export class BroccoliDBMCP {
         },
         async (args) => {
           try {
-            const node = await this.agentContext!.getKnowledge(args.kbId);
-            await this.agentContext!.updateKnowledge(args.kbId, { content: node.content });
-            const updated = await this.agentContext!.getKnowledge(args.kbId);
+            const node = await context.getKnowledge(args.kbId);
+            await context.updateKnowledge(args.kbId, { content: node.content });
+            const updated = await context.getKnowledge(args.kbId);
             const dims = updated.embedding ? updated.embedding.length : 0;
             return {
               content: [
@@ -1027,8 +1030,9 @@ export class BroccoliDBMCP {
                 },
               ],
             };
-          } catch (e: any) {
-            return { content: [{ type: 'text', text: `Error: ${e.message}` }], isError: true };
+          } catch (e: unknown) {
+            const message = e instanceof Error ? e.message : String(e);
+            return { content: [{ type: 'text', text: `Error: ${message}` }], isError: true };
           }
         },
       );
@@ -1056,7 +1060,7 @@ export class BroccoliDBMCP {
                   .map((t) => t.trim())
                   .filter(Boolean)
               : undefined;
-            const results = await this.agentContext!.searchKnowledge(
+            const results = await context.searchKnowledge(
               args.query,
               tagsArray,
               args.limit,
@@ -1064,14 +1068,15 @@ export class BroccoliDBMCP {
               { augmentWithGraph: args.augmentWithGraph },
             );
             const formatted = results
-              .map((r: any) => {
-                const embDims = r.embedding ? r.embedding.length : 0;
-                return `[${r.itemId}] (${r.type}) conf:${r.confidence ?? 1.0} embed:${embDims}d tags:[${r.tags?.join(', ')}]\n${r.content}`;
+              .map((r: KnowledgeBaseItem) => {
+                const embDims = r.embedding?.length ?? 0;
+                return `[${r.itemId}] (${r.type}) conf:${r.confidence ?? 1.0} embed:${embDims}d tags:[${r.tags.join(', ')}]\n${r.content}`;
               })
               .join('\n\n');
             return { content: [{ type: 'text', text: formatted || 'No results found.' }] };
-          } catch (e: any) {
-            return { content: [{ type: 'text', text: `Error: ${e.message}` }], isError: true };
+          } catch (e: unknown) {
+            const message = e instanceof Error ? e.message : String(e);
+            return { content: [{ type: 'text', text: `Error: ${message}` }], isError: true };
           }
         },
       );
@@ -1082,7 +1087,7 @@ export class BroccoliDBMCP {
         {},
         async () => {
           try {
-            const result = await this.agentContext!.reembedAll();
+            const result = await context.reembedAll();
             return {
               content: [
                 {
@@ -1091,8 +1096,9 @@ export class BroccoliDBMCP {
                 },
               ],
             };
-          } catch (e: any) {
-            return { content: [{ type: 'text', text: `Error: ${e.message}` }], isError: true };
+          } catch (e: unknown) {
+            const message = e instanceof Error ? e.message : String(e);
+            return { content: [{ type: 'text', text: `Error: ${message}` }], isError: true };
           }
         },
       );
@@ -1114,8 +1120,9 @@ export class BroccoliDBMCP {
             );
             const report = EnvironmentTracker.getReport(stats);
             return { content: [{ type: 'text', text: report }] };
-          } catch (e: any) {
-            return { content: [{ type: 'text', text: `Error: ${e.message}` }], isError: true };
+          } catch (e: unknown) {
+            const message = e instanceof Error ? e.message : String(e);
+            return { content: [{ type: 'text', text: `Error: ${message}` }], isError: true };
           }
         },
       );
@@ -1126,10 +1133,11 @@ export class BroccoliDBMCP {
         {},
         async () => {
           try {
-            const stats = this.agentContext!.getCacheStats();
+            const stats = context.getCacheStats();
             return { content: [{ type: 'text', text: JSON.stringify(stats, null, 2) }] };
-          } catch (e: any) {
-            return { content: [{ type: 'text', text: `Error: ${e.message}` }], isError: true };
+          } catch (e: unknown) {
+            const message = e instanceof Error ? e.message : String(e);
+            return { content: [{ type: 'text', text: `Error: ${message}` }], isError: true };
           }
         },
       );
@@ -1142,13 +1150,17 @@ export class BroccoliDBMCP {
         },
         async (args) => {
           try {
-            const hubs = await this.agentContext!.getGlobalCentrality(args.limit);
+            const hubs = await context.getGlobalCentrality(args.limit);
             const formatted = hubs
-              .map((h: any) => `Node: ${h.kbId} | Centrality Score: ${h.score}`)
+              .map(
+                (h: { kbId: string; score: number }) =>
+                  `Node: ${h.kbId} | Centrality Score: ${h.score}`,
+              )
               .join('\n');
             return { content: [{ type: 'text', text: formatted || 'No hubs discovered yet.' }] };
-          } catch (e: any) {
-            return { content: [{ type: 'text', text: `Error: ${e.message}` }], isError: true };
+          } catch (e: unknown) {
+            const message = e instanceof Error ? e.message : String(e);
+            return { content: [{ type: 'text', text: `Error: ${message}` }], isError: true };
           }
         },
       );
@@ -1171,8 +1183,9 @@ Conflicts: ${result.conflicts.join(', ') || 'None'}
 Affected Paths: ${result.affectedPaths.join(', ') || 'None'}
             `.trim();
             return { content: [{ type: 'text', text: formatted }] };
-          } catch (e: any) {
-            return { content: [{ type: 'text', text: `Error: ${e.message}` }], isError: true };
+          } catch (e: unknown) {
+            const message = e instanceof Error ? e.message : String(e);
+            return { content: [{ type: 'text', text: `Error: ${message}` }], isError: true };
           }
         },
       );

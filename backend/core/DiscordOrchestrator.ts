@@ -1,7 +1,7 @@
-import { Message as DBMessage } from '../db.js';
-import { combineToGrid, getAIResponse } from '../gemini.js';
 import type { Message as DiscordMessage, ThreadChannel } from 'discord.js';
 import winston from 'winston';
+import { Message as DBMessage } from '../db.js';
+import { combineToGrid, getAIResponse } from '../gemini.js';
 
 const logger = winston.createLogger({
   level: 'info',
@@ -33,7 +33,9 @@ export async function handleDiscordMessage(message: DiscordMessage, thread: Thre
     }
 
     if (!userMessageContent) {
-      await thread.send("Please provide a prompt! Example: `/dream a cosmic bee` or `/grid a neon hive`.");
+      await thread.send(
+        'Please provide a prompt! Example: `/dream a cosmic bee` or `/grid a neon hive`.',
+      );
       return;
     }
 
@@ -99,6 +101,8 @@ export async function handleDiscordMessage(message: DiscordMessage, thread: Thre
     });
   } catch (error) {
     logger.error('Discord Orchestrator Error:', error);
-    await thread.send("I'm sorry, I encountered an error while processing your request. Please try again later.");
+    await thread.send(
+      "I'm sorry, I encountered an error while processing your request. Please try again later.",
+    );
   }
 }

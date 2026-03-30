@@ -1,38 +1,25 @@
 import {
-  X,
-  Plus,
-  Trash2,
-  CheckCircle2,
   AlertCircle,
+  CheckCircle2,
   ExternalLink,
-  ShieldCheck,
+  Plus,
   RefreshCw,
-  Eye,
-  EyeOff,
+  ShieldCheck,
+  Trash2,
+  X,
 } from 'lucide-react';
-import React, { useState } from 'react';
+import { type FC, useState } from 'react';
 import { useProviders } from '../../hooks/useProviders';
-import {
-  type ProviderType,
-  PROVIDER_LABELS,
-  PROVIDER_ICONS,
-} from '../../types/provider';
+import { PROVIDER_ICONS, PROVIDER_LABELS, type ProviderType } from '../../types/provider';
 
 interface SettingsModalProps {
   isOpen: boolean;
   onClose: () => void;
 }
 
-const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
-  const {
-    providers,
-    isLoading,
-    error,
-    createProvider,
-    updateProvider,
-    deleteProvider,
-    validateProvider,
-  } = useProviders();
+const SettingsModal: FC<SettingsModalProps> = ({ isOpen, onClose }) => {
+  const { providers, error, createProvider, updateProvider, deleteProvider, validateProvider } =
+    useProviders();
 
   const [isAdding, setIsAdding] = useState(false);
   const [newProvider, setNewProvider] = useState({
@@ -40,7 +27,6 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     type: 'gemini' as ProviderType,
     apiKey: '',
   });
-  const [showKey, setShowKey] = useState<Record<string, boolean>>({});
   const [validating, setValidating] = useState<Record<string, boolean>>({});
 
   if (!isOpen) return null;
@@ -75,19 +61,28 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
     }
   };
 
-  const toggleKeyVisibility = (id: string) => {
-    setShowKey((prev) => ({ ...prev, [id]: !prev[id] }));
-  };
-
   return (
-    <div className="modal-overlay" onClick={onClose}>
-      <div className="modal-content" onClick={(e) => e.stopPropagation()}>
+    <button
+      type="button"
+      className="modal-overlay"
+      onClick={onClose}
+      onKeyDown={(e) => e.key === 'Escape' && onClose()}
+      aria-label="Close modal"
+    >
+      <div
+        className="modal-content"
+        onClick={(e) => e.stopPropagation()}
+        onKeyDown={(e) => e.stopPropagation()}
+        role="dialog"
+        aria-modal="true"
+        tabIndex={-1}
+      >
         <div className="modal-header">
           <div className="modal-title-group">
             <ShieldCheck className="title-icon" size={20} />
             <h2>API Key Management</h2>
           </div>
-          <button className="close-button" onClick={onClose}>
+          <button type="button" className="close-button" onClick={onClose} aria-label="Close">
             <X size={20} />
           </button>
         </div>
@@ -106,7 +101,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
 
           <div className="providers-list">
             {providers.map((provider) => (
-              <div key={provider.id} className={`provider-card ${!provider.isActive ? 'disabled' : ''}`}>
+              <div
+                key={provider.id}
+                className={`provider-card ${!provider.isActive ? 'disabled' : ''}`}
+              >
                 <div className="provider-info">
                   <span className="provider-icon">{PROVIDER_ICONS[provider.type]}</span>
                   <div className="provider-details">
@@ -138,6 +136,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
 
                   <div className="button-group">
                     <button
+                      type="button"
                       className="action-button"
                       onClick={() => handleValidate(provider.id)}
                       disabled={validating[provider.id]}
@@ -146,6 +145,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                       <RefreshCw size={16} className={validating[provider.id] ? 'spin' : ''} />
                     </button>
                     <button
+                      type="button"
                       className={`action-button ${provider.isActive ? 'active' : ''}`}
                       onClick={() => toggleStatus(provider.id, provider.isActive)}
                       title={provider.isActive ? 'Deactivate' : 'Activate'}
@@ -153,6 +153,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                       <div className={`status-toggle ${provider.isActive ? 'on' : ''}`} />
                     </button>
                     <button
+                      type="button"
                       className="action-button delete"
                       onClick={() => {
                         if (confirm('Delete this provider?')) deleteProvider(provider.id);
@@ -167,7 +168,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
             ))}
 
             {!isAdding ? (
-              <button className="add-provider-btn" onClick={() => setIsAdding(true)}>
+              <button type="button" className="add-provider-btn" onClick={() => setIsAdding(true)}>
                 <Plus size={18} />
                 <span>Add New Provider</span>
               </button>
@@ -175,8 +176,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
               <form className="add-provider-form" onSubmit={handleAdd}>
                 <div className="form-grid">
                   <div className="form-group">
-                    <label>Friendly Name</label>
+                    <label htmlFor="provider-name">Friendly Name</label>
                     <input
+                      id="provider-name"
                       type="text"
                       placeholder="e.g., My Gemini Pro"
                       value={newProvider.name}
@@ -185,8 +187,9 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                     />
                   </div>
                   <div className="form-group">
-                    <label>Provider Type</label>
+                    <label htmlFor="provider-type">Provider Type</label>
                     <select
+                      id="provider-type"
                       value={newProvider.type}
                       onChange={(e) =>
                         setNewProvider({ ...newProvider, type: e.target.value as ProviderType })
@@ -198,9 +201,10 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
                     </select>
                   </div>
                   <div className="form-group full-width">
-                    <label>API Key</label>
+                    <label htmlFor="provider-api-key">API Key</label>
                     <div className="key-input-wrapper">
                       <input
+                        id="provider-api-key"
                         type="password"
                         placeholder="Paste your API key here"
                         value={newProvider.apiKey}
@@ -230,7 +234,7 @@ const SettingsModal: React.FC<SettingsModalProps> = ({ isOpen, onClose }) => {
           </div>
         </div>
       </div>
-    </div>
+    </button>
   );
 };
 

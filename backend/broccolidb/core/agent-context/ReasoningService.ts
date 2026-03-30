@@ -155,7 +155,7 @@ export class ReasoningService {
 
     const meta = node.metadata as Record<string, unknown> | null;
     const commitId = (meta?.commitId as string) || (meta?.nodeId as string);
-    const path = (node as any).path || (meta?.path as string);
+    const path = (node as unknown as { path?: string }).path || (meta?.path as string);
 
     let commitDistance = 1000;
     let churn = 0;
@@ -242,7 +242,9 @@ export class ReasoningService {
         }
         nextScores.set(node.itemId, s);
       }
-      nextScores.forEach((score, id) => scores.set(id, score));
+      for (const [id, score] of nextScores) {
+        scores.set(id, score);
+      }
     }
 
     for (const node of allKnowledge) {

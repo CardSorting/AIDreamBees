@@ -1,9 +1,9 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import type {
-  Provider,
   CreateProviderRequest,
-  UpdateProviderRequest,
+  Provider,
   ProviderValidationResponse,
+  UpdateProviderRequest,
 } from '../types/provider';
 
 const API_BASE_URL = 'http://localhost:3001';
@@ -59,25 +59,26 @@ export function useProviders(): UseProvidersReturn {
     return newProvider;
   }, []);
 
-  const updateProvider = useCallback(async (id: string, data: UpdateProviderRequest): Promise<Provider> => {
-    setError(null);
-    const response = await fetch(`${API_BASE_URL}/api/providers/${id}`, {
-      method: 'PUT',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(data),
-    });
+  const updateProvider = useCallback(
+    async (id: string, data: UpdateProviderRequest): Promise<Provider> => {
+      setError(null);
+      const response = await fetch(`${API_BASE_URL}/api/providers/${id}`, {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(data),
+      });
 
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.error || 'Failed to update provider');
-    }
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(errorData.error || 'Failed to update provider');
+      }
 
-    const updatedProvider = await response.json();
-    setProviders((prev) =>
-      prev.map((p) => (p.id === id ? updatedProvider : p))
-    );
-    return updatedProvider;
-  }, []);
+      const updatedProvider = await response.json();
+      setProviders((prev) => prev.map((p) => (p.id === id ? updatedProvider : p)));
+      return updatedProvider;
+    },
+    [],
+  );
 
   const deleteProvider = useCallback(async (id: string): Promise<void> => {
     setError(null);
@@ -105,11 +106,9 @@ export function useProviders(): UseProvidersReturn {
     }
 
     const result = await response.json();
-    
+
     // Update the provider's validation status in the local state
-    setProviders((prev) =>
-      prev.map((p) => (p.id === id ? { ...p, isValid: result.isValid } : p))
-    );
+    setProviders((prev) => prev.map((p) => (p.id === id ? { ...p, isValid: result.isValid } : p)));
 
     return result;
   }, []);

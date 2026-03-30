@@ -1,7 +1,7 @@
-import { Message as DBMessage } from '../db.js';
-import { combineToGrid, getAIResponse } from '../gemini.js';
 import type TelegramBot from 'node-telegram-bot-api';
 import winston from 'winston';
+import { Message as DBMessage } from '../db.js';
+import { combineToGrid, getAIResponse } from '../gemini.js';
 
 const logger = winston.createLogger({
   level: 'info',

@@ -11,7 +11,9 @@ import { AgentContext } from '../core/agent-context.js';
 import { Connection } from '../core/connection.js';
 import { AiService } from '../core/embedding.js';
 import { BroccoliDBMCP } from '../core/mcp.js';
+import type { Repository } from '../core/repository.js';
 import { Workspace } from '../core/workspace.js';
+
 
 const args = process.argv.slice(2);
 const command = args[0];
@@ -88,7 +90,7 @@ async function status() {
     await ws.init();
 
     const repoName = path.basename(process.cwd());
-    const repo = await ws.getRepo(repoName);
+    const _repo = await ws.getRepo(repoName);
 
     // Stats
     const nodes = await pool.selectWhere('knowledge', []);
@@ -111,7 +113,7 @@ async function status() {
     console.log(`${chalk.bold.white('REPOSITORY STATUS')}`);
     console.log(`  ${chalk.bold('Path:')}           ${chalk.dim(process.cwd())}`);
     console.log(
-      `  ${chalk.bold('Database:')}       ${chalk.cyan('broccolidb.db')} ${chalk.dim('(' + totalSize + 'MB)')}`,
+      `  ${chalk.bold('Database:')}       ${chalk.cyan('broccolidb.db')} ${chalk.dim(`(${totalSize}MB)`)}`,
     );
     console.log(`  ${chalk.bold('Embeddings:')}     ${embeddingStatus}`);
     if (!apiKey) {
@@ -139,8 +141,9 @@ async function status() {
       });
     }
     console.log();
-  } catch (e: any) {
-    spinner.fail(chalk.red(`Analysis failed: ${e.message}`));
+  } catch (e: unknown) {
+    const error = e instanceof Error ? e.message : String(e);
+    spinner.fail(chalk.red(`Analysis failed: ${error}`));
   }
 }
 
@@ -278,13 +281,13 @@ async function init() {
   const ws = new Workspace(pool, userId, workspaceId);
   await ws.init();
 
-  let repo;
+  let repo: Repository;
   try {
     repo = await ws.getRepo(repoName);
-  } catch (e) {
+  } catch (_e) {
     repo = await ws.createRepo(repoName);
   }
-  spinner.succeed(`Database ready ${chalk.dim('(' + dbPath + ')')}`);
+  spinner.succeed(`Database ready ${chalk.dim(`(${dbPath})`)}`);
 
   // Seamless Integration
   const claudeConfigPath = getClaudeConfigPath();
@@ -314,8 +317,9 @@ async function init() {
         console.log(
           `${chalk.green('✅')} ${chalk.bold('Integrated!')} BroccoliDB added to ${chalk.dim(claudeConfigPath)}\n`,
         );
-      } catch (e: any) {
-        console.log(`${chalk.red('✘')} ${chalk.bold('Integration failed:')} ${e.message}\n`);
+      } catch (_e: unknown) {
+        const error = _e instanceof Error ? _e.message : String(_e);
+        console.log(`${chalk.red('✘')} ${chalk.bold('Integration failed:')} ${error}\n`);
       }
     }
   }
@@ -337,7 +341,7 @@ async function init() {
 
   try {
     await repo.resolveRef(branch);
-  } catch (e) {
+  } catch (_e) {
     spinner.info(`New branch detected: ${chalk.cyan(branch)}`);
   }
 
@@ -357,7 +361,7 @@ async function init() {
       count++;
       if (count % 5 === 0 || count === files.length) {
         const progress = Math.round((count / files.length) * 100);
-        indexSpinner.text = `Indexing ${chalk.bold(count)}/${files.length} ${chalk.dim('(' + progress + '%)')}...`;
+        indexSpinner.text = `Indexing ${chalk.bold(count)}/${files.length} ${chalk.dim(`(${progress}%)`)}...`;
       }
     }
   }
@@ -386,7 +390,7 @@ async function init() {
     2,
   );
 
-  console.log(chalk.bgGray.black('\n' + configBlock + '\n'));
+  console.log(chalk.bgGray.black(`\n${configBlock}\n`));
 
   console.log(`${chalk.bold.white('NEXT STEPS')}`);
   console.log(`  1. ${chalk.bold('Restart')} Claude Desktop`);
@@ -440,9 +444,9 @@ async function serve() {
   const repo = await ws.getRepo(repoName);
 
   // Initialize AiService if key is present
-  let aiService;
+  let _aiService: AiService | undefined;
   if (process.env.GEMINI_API_KEY || process.env.GOOGLE_API_KEY) {
-    aiService = new AiService();
+    _aiService = new AiService();
   }
 
   const agentContext = new AgentContext(ws, pool, userId, { agentId: 'cli', name: 'CLI' });
@@ -452,7 +456,8 @@ async function serve() {
 
   // Logs to stderr
   console.error(chalk.dim(`[BroccoliDB] Internal server starting for ${chalk.bold(repoName)}...`));
-  await (server as any).server.connect(transport);
+  // @ts-expect-error - Internal server access for CLI
+  await server.server.connect(transport);
 }
 
 main().catch((err) => {

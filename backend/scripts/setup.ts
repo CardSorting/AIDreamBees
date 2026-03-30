@@ -1,7 +1,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
-import * as readline from 'node:readline/promises';
 import { stdin as input, stdout as output } from 'node:process';
+import * as readline from 'node:readline/promises';
 
 async function setup() {
   const rl = readline.createInterface({ input, output });
@@ -20,7 +20,10 @@ async function setup() {
   console.log(asciiArt);
   console.log('\x1b[1;33m%s\x1b[0m', '🐝 Welcome to the DreamBeesAI Onboarding Tool! 🐝');
   console.log('\x1b[33m%s\x1b[0m', '━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━');
-  console.log('\x1b[3m\x1b[90m%s\x1b[0m', '  Building the future of AI orchestration with grace and power.\n');
+  console.log(
+    '\x1b[3m\x1b[90m%s\x1b[0m',
+    '  Building the future of AI orchestration with grace and power.\n',
+  );
 
   if (!fs.existsSync(envExamplePath)) {
     console.error('\x1b[1;31m❌ Error: .env.example file not found!\x1b[0m');
@@ -50,13 +53,19 @@ async function setup() {
     // Interactive skipping with help
     if (key === 'DISCORD_TOKEN') {
       console.log('\x1b[1;35m━━━ Discord Integration ━━━\x1b[0m');
-      const skip = await rl.question('\x1b[35mDo you want to set up Discord? (y/n, or type "help"): \x1b[0m');
+      const skip = await rl.question(
+        '\x1b[35mDo you want to set up Discord? (y/n, or type "help"): \x1b[0m',
+      );
       if (skip.toLowerCase() === 'help') {
         console.log('\n\x1b[35m🎮 DISCORD SETUP WALKTHROUGH:\x1b[0m');
-        console.log('  1. Go to the Discord Developer Portal: https://discord.com/developers/applications');
+        console.log(
+          '  1. Go to the Discord Developer Portal: https://discord.com/developers/applications',
+        );
         console.log('  2. Create a "New Application".');
         console.log('  3. Go to "Bot" settings, reset/copy your "Token".');
-        console.log('  4. Ensure "Message Content Intent" is enabled under "Privileged Gateway Intents".\n');
+        console.log(
+          '  4. Ensure "Message Content Intent" is enabled under "Privileged Gateway Intents".\n',
+        );
         const skipAfterHelp = await rl.question('Ready to set up Discord? (y/n): ');
         if (skipAfterHelp.toLowerCase() === 'n') skipDiscord = true;
       } else if (skip.toLowerCase() === 'n') {
@@ -66,7 +75,9 @@ async function setup() {
 
     if (key === 'TELEGRAM_BOT_TOKEN') {
       console.log('\n\x1b[1;34m━━━ Telegram Integration ━━━\x1b[0m');
-      const skip = await rl.question('\x1b[34mDo you want to set up Telegram? (y/n, or type "help"): \x1b[0m');
+      const skip = await rl.question(
+        '\x1b[34mDo you want to set up Telegram? (y/n, or type "help"): \x1b[0m',
+      );
       if (skip.toLowerCase() === 'help') {
         console.log('\n\x1b[34m📱 TELEGRAM SETUP WALKTHROUGH:\x1b[0m');
         console.log('  1. Open Telegram and search for "@BotFather".');
@@ -105,11 +116,16 @@ async function setup() {
         answer = help;
       }
     } else if (key === 'SOKETI_APP_ID' || key === 'SOKETI_APP_KEY' || key === 'SOKETI_APP_SECRET') {
-      if (key === 'SOKETI_APP_ID') console.log('\n\x1b[1;36m━━━ WebSocket Server (Soketi) ━━━\x1b[0m');
-      const help = await rl.question(`\x1b[36mEnter value for ${key} (default: ${defaultValue}, or type "help"): \x1b[0m`);
+      if (key === 'SOKETI_APP_ID')
+        console.log('\n\x1b[1;36m━━━ WebSocket Server (Soketi) ━━━\x1b[0m');
+      const help = await rl.question(
+        `\x1b[36mEnter value for ${key} (default: ${defaultValue}, or type "help"): \x1b[0m`,
+      );
       if (help.toLowerCase() === 'help') {
         console.log('\n\x1b[36m📡 SOKETI CONFIGURATION GUIDE:\x1b[0m');
-        console.log('  Soketi is a self-hosted WebSocket server. You can use any values for local development.');
+        console.log(
+          '  Soketi is a self-hosted WebSocket server. You can use any values for local development.',
+        );
         console.log('  Defaults are recommended for local setup:');
         console.log('  - ID: app-id');
         console.log('  - Key: app-key');
@@ -119,7 +135,9 @@ async function setup() {
         answer = help;
       }
     } else {
-      answer = await rl.question(`\x1b[1mEnter value for ${key}${defaultValue ? ` (default: ${defaultValue})` : ''}: \x1b[0m`);
+      answer = await rl.question(
+        `\x1b[1mEnter value for ${key}${defaultValue ? ` (default: ${defaultValue})` : ''}: \x1b[0m`,
+      );
     }
     newEnv.push(`${key}=${answer || defaultValue || ''}`);
   }
@@ -128,7 +146,9 @@ async function setup() {
   console.log('\n\x1b[1;32m🎉 Success! .env file has been created.\x1b[0m');
 
   console.log('\n\x1b[1;33m━━━ Automated Launch ━━━\x1b[0m');
-  const launchAll = await rl.question('\x1b[33m🚀 Do you want to launch EVERYTHING now? (Backend, Soketi, Frontend) (y/n, default: y): \x1b[0m');
+  const launchAll = await rl.question(
+    '\x1b[33m🚀 Do you want to launch EVERYTHING now? (Backend, Soketi, Frontend) (y/n, default: y): \x1b[0m',
+  );
   const shouldLaunchAll = launchAll.toLowerCase() !== 'n';
 
   if (shouldLaunchAll) {

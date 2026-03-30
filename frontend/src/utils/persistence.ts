@@ -2,6 +2,25 @@ const DB_NAME = 'DreamBeesAI_Substrate';
 const STORE_NAME = 'messages';
 const DB_VERSION = 1;
 
+export interface StoredSuggestion {
+  id: string;
+  label: string;
+  action: string;
+}
+
+export interface StoredMessage {
+  id: string;
+  user: string;
+  message: string;
+  type: 'bot' | 'user';
+  timestamp: string;
+  images: string[];
+  sourceImages?: string[];
+  soundness?: number;
+  isGrounded?: boolean;
+  suggestions?: StoredSuggestion[];
+}
+
 export const initDB = (): Promise<IDBDatabase> => {
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
@@ -18,7 +37,7 @@ export const initDB = (): Promise<IDBDatabase> => {
   });
 };
 
-export const saveMessagesLocal = async (messages: any[]) => {
+export const saveMessagesLocal = async (messages: StoredMessage[]) => {
   try {
     const db = await initDB();
     const tx = db.transaction(STORE_NAME, 'readwrite');
@@ -39,7 +58,7 @@ export const saveMessagesLocal = async (messages: any[]) => {
   }
 };
 
-export const loadMessagesLocal = async (): Promise<any[]> => {
+export const loadMessagesLocal = async (): Promise<StoredMessage[]> => {
   try {
     const db = await initDB();
     const tx = db.transaction(STORE_NAME, 'readonly');

@@ -75,11 +75,8 @@ const getAIResponse = async (
       const results = await Promise.all(imagePromises);
       // Fixed type guard to correctly identify non-null image parts
       const imageParts = results.filter((r): r is { type: 'image'; content: string } => r !== null);
-      
-      return [
-        { type: 'text', content: `Generated a 2x2 grid for: "${message}"` },
-        ...imageParts
-      ];
+
+      return [{ type: 'text', content: `Generated a 2x2 grid for: "${message}"` }, ...imageParts];
     } else {
       // Single image generation
       const response = await ai.models.generateContent({

@@ -19,10 +19,7 @@ export class SuggestionService {
   private isGenerating = false;
   private lastFetchTime = 0;
   private readonly DEBOUNCE_INTERVAL = 10000; // 10 seconds
-  private readonly SUGGESTION_HISTORY_SIZE = 6;
-  private suggestionHistory: PromptSuggestion[] = [];
   private suggestionCache = new Map<string, CachedSuggestions>();
-  private static readonly MAX_SUGGESTION_CACHE_SIZE = 50;
 
   constructor(private ctx: ServiceContext) {}
 
@@ -37,7 +34,7 @@ export class SuggestionService {
       fileContent?: string;
       diagnostics?: string;
       gitStatus?: string;
-      messages?: any[];
+      messages?: unknown[];
     },
     agentContext: IAgentContext,
   ): Promise<PromptSuggestion[]> {
@@ -51,7 +48,7 @@ export class SuggestionService {
     }
 
     this.isGenerating = true;
-    const { mode, activeFilePath, fileContent, diagnostics, gitStatus, messages = [] } = params;
+    const { mode, activeFilePath, fileContent, diagnostics, gitStatus, messages: _messages = [] } = params;
 
     try {
       if (!this.ctx.aiService?.isAvailable()) {

@@ -1,8 +1,7 @@
 import * as crypto from 'node:crypto';
-import { type BufferedDbPool, dbPool } from '../infrastructure/db/BufferedDbPool.js';
-import type { Schema } from '../infrastructure/db/Config.js';
+import type { BufferedDbPool } from '../infrastructure/db/BufferedDbPool.js';
 import { Connection } from './connection.js';
-import { AgentGitError, PathSanitizer } from './errors.js';
+import { AgentGitError } from './errors.js';
 import { executor } from './executor.js';
 import type { FileEntry } from './file-tree.js';
 import { FileTree } from './file-tree.js';
@@ -29,7 +28,7 @@ export interface Usage {
 export interface MemoryNode {
   id: string;
   parentId: string | null;
-  data: any;
+  data: Record<string, any>;
   message: string;
   timestamp: number;
   author: string;
@@ -43,7 +42,7 @@ export interface MemoryNode {
         isHierarchical?: boolean;
         taskId?: string;
         decisionIds?: string[];
-        environment?: any;
+        environment?: Record<string, any>;
         [key: string]: any;
       }
     | undefined;
@@ -165,7 +164,7 @@ export class Repository {
   }
 
   files(): FileTree {
-    return new FileTree(this.db as any, this);
+    return new FileTree(this.db, this);
   }
   getBasePath(): string {
     return this.basePath;
@@ -363,7 +362,7 @@ export class Repository {
 
       for (const row of rows) {
         const node: MemoryNode = {
-          ...(row as any),
+          ...(row as unknown as MemoryNode),
           data: JSON.parse(row.data),
           tree: row.tree ? JSON.parse(row.tree) : undefined,
           usage: row.usage ? JSON.parse(row.usage) : undefined,
@@ -454,7 +453,7 @@ export class Repository {
 
   async commit(
     branchName: string,
-    data: any,
+    data: Record<string, any>,
     author: string,
     message: string = '',
     options: {
@@ -524,7 +523,7 @@ export class Repository {
     nodeId: string,
     author: string,
     message: string,
-    data: any,
+    data: Record<string, any>,
     options: { usage?: Usage } = {},
   ) {
     // 1. Offload Telemetry to memory queue (batched flush later)
@@ -550,10 +549,10 @@ export class Repository {
    * This allows external components (like FileTree) to batch file writes and commits together.
    */
   public async commitInTransaction(
-    transaction: any, // Ignored in SQLite but kept for interface compatibility
+    _transaction: any, // Ignored in SQLite but kept for interface compatibility
     branchName: string,
     nodeId: string,
-    data: any,
+    data: Record<string, any>,
     author: string,
     message: string = '',
     options: {
@@ -748,8 +747,10 @@ export class Repository {
     const sortedKeys = Object.keys(entries).sort();
     const hash = crypto.createHash('sha256');
     for (const key of sortedKeys) {
-      const entry = entries[key]!;
-      hash.update(`${key}:${entry.type}:${entry.hash}`);
+      const entry = entries[key];
+      if (entry) {
+        hash.update(`${key}:${entry.type}:${entry.hash}`);
+      }
     }
     return hash.digest('hex');
   }
@@ -758,7 +759,7 @@ export class Repository {
    * Writes a tree snapshot to the CAS trees collection.
    */
   public async writeTree(
-    transaction: any,
+    _transaction: any,
     entries: Record<string, TreeEntry>,
     agentId?: string,
   ): Promise<string> {
@@ -1421,7 +1422,7 @@ export class Repository {
             confidence: r.confidence,
           }));
         }
-      } catch (e) {
+      } catch (_e) {
         /* ignore audit errors */
       }
     }
@@ -2105,7 +2106,9 @@ export class Repository {
     for (const node of history) {
       nodes.push(node);
       const tree = node.tree || (await this.resolveTree(node));
-      Object.values(tree).forEach((id) => fileIds.add(id as string));
+      Object.values(tree).forEach((id) => {
+        fileIds.add(id as string);
+      });
       if (node.id === fromId) break;
     }
 
@@ -2312,7 +2315,7 @@ export class Repository {
     const appliedCommits = path.slice(0, path.length - 1).reverse(); // Oldest to newest
 
     const authors = new Set<string>();
-    const filesModified = new Set<string>();
+    const _filesModified = new Set<string>();
     const messages: string[] = [];
 
     const baseNode = path[path.length - 1]!;

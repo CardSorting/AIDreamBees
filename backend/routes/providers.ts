@@ -1,6 +1,12 @@
-import { Router, type Request, type Response } from 'express';
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { Provider, encryptApiKey, decryptApiKey, maskApiKey, type ProviderType } from '../models/Provider.js';
+import { type Request, type Response, Router } from 'express';
+import {
+  decryptApiKey,
+  encryptApiKey,
+  maskApiKey,
+  Provider,
+  type ProviderType,
+} from '../models/Provider.js';
 
 const router = Router();
 
@@ -44,7 +50,7 @@ router.post('/', async (req: Request, res: Response) => {
 
   try {
     const encryptedKey = encryptApiKey(apiKey);
-    
+
     const provider = await Provider.create({
       name,
       type,
@@ -83,7 +89,7 @@ router.put('/:id', async (req: Request, res: Response) => {
     if (name) provider.name = name;
     if (apiKey) provider.apiKey = encryptApiKey(apiKey);
     if (typeof isActive === 'boolean') provider.isActive = isActive;
-    
+
     // Reset validation status when key changes
     if (apiKey) provider.isValid = null;
 

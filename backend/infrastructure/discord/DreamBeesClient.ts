@@ -1,14 +1,5 @@
-import {
-  ChannelType,
-  Client,
-  Events,
-  GatewayIntentBits,
-} from 'discord.js';
-import type {
-  Message,
-  TextChannel,
-  ThreadChannel,
-} from 'discord.js';
+import type { Message, TextChannel, ThreadChannel } from 'discord.js';
+import { ChannelType, Client, Events, GatewayIntentBits } from 'discord.js';
 import dotenv from 'dotenv';
 import winston from 'winston';
 
@@ -68,8 +59,10 @@ export class DreamBeesAIClient {
         reason: 'New private art studio for user',
       });
 
-      await thread.send(`Welcome to your private art studio, ${message.author.username}! I am DreamBeesAI, your AI creative partner.`);
-      
+      await thread.send(
+        `Welcome to your private art studio, ${message.author.username}! I am DreamBeesAI, your AI creative partner.`,
+      );
+
       // Pass the original message to the callback within the context of the new thread
       await this.onMessageCallback(message, thread);
     } catch (error) {
