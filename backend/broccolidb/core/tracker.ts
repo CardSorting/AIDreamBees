@@ -1,6 +1,7 @@
 import * as crypto from 'node:crypto';
-import * as os from 'os';
+import * as os from 'node:os';
 import { BufferedDbPool } from '../infrastructure/db/BufferedDbPool.js';
+import { SqliteQueue } from '../infrastructure/queue/SqliteQueue.js';
 import { LRUCache } from './lru-cache.js';
 
 export interface EnvironmentMetadata {
@@ -12,9 +13,12 @@ export interface EnvironmentMetadata {
   timestamp: string;
 }
 
-export class EnvironmentTracker {
+/**
+ * EnvironmentTracker manages system metadata and pricing estimates.
+ */
+export namespace EnvironmentTracker {
   // Production Parameterized Constants
-  private static CONFIG = {
+  const CONFIG = {
     DEFAULT_PRICING: {
       'tier-high': { input: 0.01, output: 0.03 },
       'tier-medium': { input: 0.003, output: 0.015 },
@@ -24,15 +28,15 @@ export class EnvironmentTracker {
     CACHE_SIZE: 100,
   };
 
-  private static PRICING: Record<string, { input: number; output: number }> = {
-    ...EnvironmentTracker.CONFIG.DEFAULT_PRICING,
+  const PRICING: Record<string, { input: number; output: number }> = {
+    ...CONFIG.DEFAULT_PRICING,
   };
-  private static trackerCache = new LRUCache<string, any>(EnvironmentTracker.CONFIG.CACHE_SIZE);
+  const trackerCache = new LRUCache<
+    string,
+    { totalCommits: number; totalTokens: number; totalCost: number }
+  >(CONFIG.CACHE_SIZE);
 
-  /**
-   * Captures the current system and process environment metadata.
-   */
-  static capture(): EnvironmentMetadata {
+  export function capture(): EnvironmentMetadata {
     return {
       osName: os.platform(),
       osVersion: os.release(),
@@ -46,21 +50,21 @@ export class EnvironmentTracker {
   /**
    * Configure model pricing rates.
    */
-  static setPricing(modelId: string, rates: { input: number; output: number }) {
-    EnvironmentTracker.PRICING[modelId] = rates;
+  export function setPricing(modelId: string, rates: { input: number; output: number }) {
+    PRICING[modelId] = rates;
   }
 
   /**
    * Estimates cost for a given usage.
    */
-  static estimateCost(usage: {
+  export function estimateCost(usage: {
     promptTokens: number;
     completionTokens: number;
     modelId?: string;
     pricingTier?: string;
   }): number {
     const tier = usage.pricingTier || usage.modelId || 'default';
-    const rates = EnvironmentTracker.PRICING[tier] || EnvironmentTracker.PRICING['default']!;
+    const rates = PRICING[tier] ?? PRICING.default;
     return (
       (usage.promptTokens / 1000) * rates.input + (usage.completionTokens / 1000) * rates.output
     );
@@ -69,7 +73,7 @@ export class EnvironmentTracker {
   /**
    * Persists usage data to the repository's telemetry collection and updates O(1) aggregates.
    */
-  static async recordUsage(
+  export async function recordUsage(
     db: BufferedDbPool,
     basePath: string,
     agentId: string,
@@ -158,48 +162,12 @@ export class EnvironmentTracker {
     }
 
     // Invalidate caches
-    EnvironmentTracker.trackerCache.delete('global');
-    EnvironmentTracker.trackerCache.delete(`agent_${agentId}`);
-    if (taskId) EnvironmentTracker.trackerCache.delete(`task_${taskId}`);
+    trackerCache.delete('global');
+    trackerCache.delete(`agent_${agentId}`);
+    if (taskId) trackerCache.delete(`task_${taskId}`);
   }
 
-  /**
-   * Retrieves aggregate telemetry stats.
-   * Optimized to read from pre-computed aggregate documents (O(1)).
-   */
-  static async getStats(
-    db: BufferedDbPool,
-    basePath: string,
-    agentId?: string,
-    taskId?: string,
-  ): Promise<{ totalCommits: number; totalTokens: number; totalCost: number }> {
-    let docId = 'global';
-
-    if (taskId) docId = `task_${taskId}`;
-    else if (agentId) docId = `agent_${agentId}`;
-
-    const cached = EnvironmentTracker.trackerCache.get(docId);
-    if (cached) return cached;
-
-    const row = await db.selectOne('telemetry_aggregates', [
-      { column: 'repoPath', value: basePath },
-      { column: 'id', value: docId },
-    ]);
-
-    if (!row) {
-      return { totalCommits: 0, totalTokens: 0, totalCost: 0 };
-    }
-
-    const statsObj = {
-      totalCommits: row.totalCommits || 0,
-      totalTokens: row.totalTokens || 0,
-      totalCost: row.totalCost || 0,
-    };
-    EnvironmentTracker.trackerCache.set(docId, statsObj);
-    return statsObj;
-  }
-
-  static getReport(stats: {
+  export function getReport(stats: {
     totalCommits: number;
     totalTokens: number;
     totalCost: number;
@@ -217,6 +185,42 @@ Avg Tokens/Commit: ${efficiency}
 =============================
     `.trim();
   }
+
+  /**
+   * Retrieves aggregate telemetry stats.
+   * Optimized to read from pre-computed aggregate documents (O(1)).
+   */
+  export async function getStats(
+    db: BufferedDbPool,
+    basePath: string,
+    agentId?: string,
+    taskId?: string,
+  ): Promise<{ totalCommits: number; totalTokens: number; totalCost: number }> {
+    let docId = 'global';
+
+    if (taskId) docId = `task_${taskId}`;
+    else if (agentId) docId = `agent_${agentId}`;
+
+    const cached = trackerCache.get(docId);
+    if (cached) return cached;
+
+    const row = await db.selectOne('telemetry_aggregates', [
+      { column: 'repoPath', value: basePath },
+      { column: 'id', value: docId },
+    ]);
+
+    if (!row) {
+      return { totalCommits: 0, totalTokens: 0, totalCost: 0 };
+    }
+
+    const statsObj = {
+      totalCommits: Number(row.totalCommits || 0),
+      totalTokens: Number(row.totalTokens || 0),
+      totalCost: Number(row.totalCost || 0),
+    };
+    trackerCache.set(docId, statsObj);
+    return statsObj;
+  }
 }
 
 export interface TelemetryPayload {
@@ -228,79 +232,62 @@ export interface TelemetryPayload {
 /**
  * Background queue for async telemetry offloading to ensure commit hot-path remains unblocked.
  *
- * Batches telemetry requests and periodically persists them to Firestore.
+ * Hardened to use SqliteQueue for zero-loss persistence across process crashes.
  */
 export class AsyncTelemetryQueue {
-  private queue: Array<{ payload: TelemetryPayload; db: BufferedDbPool; basePath: string }> = [];
-  private flushTimer: ReturnType<typeof setTimeout> | null = null;
-  private isFlushing = false;
+  private queue: SqliteQueue<{ payload: TelemetryPayload; db: BufferedDbPool; basePath: string }>;
+  private isProcessing = false;
 
-  constructor(
-    private maxBatchSize: number = 10,
-    private flushIntervalMs: number = 2000,
-  ) {}
+  constructor() {
+    this.queue = new SqliteQueue({
+      dbPath: 'telemetry_queue.db', // Use a separate file for telemetry to avoid main DB lock contention
+      tableName: 'telemetry_jobs',
+      visibilityTimeoutMs: 60000, // 1 minute
+    });
 
-  enqueue(db: BufferedDbPool, basePath: string, payload: TelemetryPayload) {
-    this.queue.push({ payload, db, basePath });
-    if (this.queue.length >= this.maxBatchSize && !this.isFlushing) {
-      this.flush();
-    } else if (!this.flushTimer) {
-      this.flushTimer = setTimeout(() => this.flush(), this.flushIntervalMs);
-    }
+    this.startProcessor();
   }
 
-  async flush(): Promise<void> {
-    if (this.queue.length === 0 || this.isFlushing) return;
-    this.isFlushing = true;
+  private startProcessor() {
+    if (this.isProcessing) return;
+    this.isProcessing = true;
 
-    if (this.flushTimer) {
-      clearTimeout(this.flushTimer);
-      this.flushTimer = null;
-    }
+    // Process jobs as they come
+    this.queue.process(
+      async (job) => {
+        const { payload, db, basePath } = job.payload;
+        await EnvironmentTracker.recordUsage(
+          db,
+          basePath,
+          payload.agentId,
+          payload.usage,
+          payload.taskId,
+        );
+      },
+      { concurrency: 2, pollIntervalMs: 100 },
+    );
+  }
 
-    const batchToProcess = this.queue.splice(0, this.maxBatchSize);
-
-    try {
-      // Process in parallel using Promise.allSettled
-      await Promise.allSettled(
-        batchToProcess.map(({ payload, db, basePath }) =>
-          EnvironmentTracker.recordUsage(
-            db,
-            basePath,
-            payload.agentId,
-            payload.usage,
-            payload.taskId,
-          ),
-        ),
-      );
-    } catch (err) {
-      console.error('[AsyncTelemetryQueue] Batch flush failed:', err);
-    } finally {
-      this.isFlushing = false;
-      // If items accumulated while flushing, trigger next flush
-      if (this.queue.length > 0 && !this.flushTimer) {
-        this.flushTimer = setTimeout(() => this.flush(), this.flushIntervalMs);
-      }
-    }
+  enqueue(db: BufferedDbPool, basePath: string, payload: TelemetryPayload) {
+    this.queue.enqueue({ payload, db, basePath });
   }
 
   /**
    * Immediately drains all items in the queue.
    */
   async drain(): Promise<void> {
-    while (this.queue.length > 0 || this.isFlushing) {
-      if (this.isFlushing) {
-        await new Promise((r) => setTimeout(r, 50));
-      } else {
-        await this.flush();
-      }
+    // Wait for the queue to be empty
+    while (this.queue.size() > 0) {
+      await new Promise((r) => setTimeout(r, 100));
     }
   }
 
   get stats() {
+    const metrics = this.queue.getMetrics();
     return {
-      pending: this.queue.length,
-      isFlushing: this.isFlushing,
+      pending: metrics.pending,
+      processing: metrics.processing,
+      isFlushing: this.isProcessing,
     };
   }
 }

@@ -2,11 +2,15 @@ import os from 'node:os';
 import bodyParser from 'body-parser';
 import cors from 'cors';
 import express, { type Request, type Response } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import helmet from 'helmet';
 import morgan from 'morgan';
 import Pusher from 'pusher';
-import { rateLimit } from 'express-rate-limit';
 import winston from 'winston';
+import { z } from 'zod';
+import { telemetryQueue } from './broccolidb/core/tracker.js';
+import { dbPool } from './broccolidb/infrastructure/db/BufferedDbPool.js';
+import { config as validatedConfig } from './config.schema.js';
 import { handleDiscordMessage } from './core/DiscordOrchestrator.js';
 import { handleTelegramMessage } from './core/TelegramOrchestrator.js';
 import { initDB, Message, sequelize } from './db.js';
@@ -14,8 +18,6 @@ import { combineToGrid, getAIResponse } from './gemini.js';
 import { DreamBeesAIClient } from './infrastructure/discord/DreamBeesClient.js';
 import { DreamBeesAITelegramClient } from './infrastructure/telegram/DreamBeesTelegramClient.js';
 import providersRouter from './routes/providers.js';
-import { config as validatedConfig } from './config.schema.js';
-import { z } from 'zod';
 
 const app = express();
 const PORT = validatedConfig.PORT;
@@ -36,10 +38,7 @@ const chatRequestSchema = z.object({
 // --- Production Logging (Winston) ---
 const logger = winston.createLogger({
   level: 'info',
-  format: winston.format.combine(
-    winston.format.timestamp(),
-    winston.format.json()
-  ),
+  format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
   transports: [
     new winston.transports.Console(),
     new winston.transports.File({ filename: 'combined.log' }),
@@ -48,7 +47,9 @@ const logger = winston.createLogger({
 
 // --- Security & Middleware ---
 app.use(helmet());
-app.use(morgan('combined', { stream: { write: (message: string) => logger.info(message.trim()) } }));
+app.use(
+  morgan('combined', { stream: { write: (message: string) => logger.info(message.trim()) } }),
+);
 app.use(
   cors({
     origin: ['http://localhost:5173', 'http://localhost:5174'], // Frontend URLs
@@ -91,7 +92,12 @@ const pusher = new Pusher({
  * Globally Safe Pusher Trigger
  * Ensures that websocket failures do not crash the main thread or leak raw errors.
  */
-const safeTrigger = async (channel: string, event: string, data: Record<string, unknown>, correlationId?: string) => {
+const safeTrigger = async (
+  channel: string,
+  event: string,
+  data: Record<string, unknown>,
+  correlationId?: string,
+) => {
   try {
     const payload = {
       ...data,
@@ -146,7 +152,7 @@ app.get('/api/health', async (_req: Request, res: Response) => {
     const memoryUsage = process.memoryUsage();
     const systemUptime = os.uptime();
     const appUptime = (Date.now() - startTime) / 1000;
-    
+
     // Check DB health
     let dbStatus = 'Optimal';
     try {
@@ -166,7 +172,7 @@ app.get('/api/health', async (_req: Request, res: Response) => {
     }
 
     const health = {
-      entropy: Math.min(0.9, (memoryUsage.heapUsed / memoryUsage.heapTotal) + (Math.random() * 0.05)),
+      entropy: Math.min(0.9, memoryUsage.heapUsed / memoryUsage.heapTotal + Math.random() * 0.05),
       health: dbStatus,
       soketiStatus: soketiStatus,
       violations: 0,
@@ -215,14 +221,16 @@ app.use('/api/providers', providersRouter);
 // --- Real-time Chat API Endpoint (Full Cognitive Substrate) ---
 app.post('/api/chat', apiLimiter, async (req: Request, res: Response) => {
   // Payload Hardening (Pass 2 & 3)
-  const validationResult = chatRequestSchema.extend({
-    correlationId: z.string().optional()
-  }).safeParse(req.body);
+  const validationResult = chatRequestSchema
+    .extend({
+      correlationId: z.string().optional(),
+    })
+    .safeParse(req.body);
 
   if (!validationResult.success) {
-    return res.status(400).json({ 
-      error: 'Cognitive payload violation', 
-      details: validationResult.error.format() 
+    return res.status(400).json({
+      error: 'Cognitive payload violation',
+      details: validationResult.error.format(),
     });
   }
 
@@ -242,19 +250,38 @@ app.post('/api/chat', apiLimiter, async (req: Request, res: Response) => {
 
     // 3. Substrate Retrieval (Functional context grounding)
     const recentHistory = await Message.findAll({ limit: 5, order: [['timestamp', 'DESC']] });
-    const substrateContext = recentHistory.length > 0 
-      ? `Resonating with recent hive activity: ${recentHistory.map(m => m.message.substring(0, 50)).join('; ')}`
-      : 'Knowledge base retrieval active.';
-
-    // 4. Call Gemini API with Augmented Context
-    const resultParts = await getAIResponse((history || []) as any[], message || '', substrateContext, useGrid);
+    const substrateContext =
+      recentHistory.length > 0
+        ? `Resonating with recent hive activity: ${recentHistory.map((m) => m.message.substring(0, 50)).join('; ')}`
+        : 'Knowledge base retrieval active.';
 
     // 5. Process parts (Text and images)
+    interface GeminiPart {
+      type: 'text' | 'image';
+      content: string;
+    }
+
+    interface GeminiHistoryMessage {
+      user: string;
+      message: string;
+      type: string;
+      images?: string[];
+    }
+
+    const resultParts = (await getAIResponse(
+      (history || []) as GeminiHistoryMessage[],
+      message || '',
+      substrateContext,
+      useGrid,
+    )) as GeminiPart[];
+
     const botText = resultParts
       .filter((p) => p.type === 'text')
       .map((p) => p.content)
       .join('\n\n');
-    let botImages = resultParts.filter((p) => p.type === 'image').map((p) => p.content);
+    let botImages = resultParts
+      .filter((p): p is GeminiPart & { type: 'image' } => p.type === 'image')
+      .map((p) => p.content);
 
     // 5b. Grid Mode Logic
     let sourceImages: string[] = [];
@@ -277,19 +304,24 @@ app.post('/api/chat', apiLimiter, async (req: Request, res: Response) => {
     });
 
     // 7. Broadcast via WebSocket
-    safeTrigger('presence-chat', 'bot-message', {
-      message: botText,
-      images: botImages,
-      sourceImages: sourceImages,
-      user: 'Nano Banana 2',
-      soundness: savedBotMsg.soundness || 1.0,
-      isGrounded: !!substrateContext,
-    }, correlationId);
+    safeTrigger(
+      'presence-chat',
+      'bot-message',
+      {
+        message: botText,
+        images: botImages,
+        sourceImages: sourceImages,
+        user: 'Nano Banana 2',
+        soundness: savedBotMsg.soundness || 1.0,
+        isGrounded: !!substrateContext,
+      },
+      correlationId,
+    );
 
     // 8. Update Structural Health (Trigger update)
     const memoryUsage = process.memoryUsage();
     const health = {
-      entropy: Math.min(0.9, (memoryUsage.heapUsed / memoryUsage.heapTotal) + (Math.random() * 0.05)),
+      entropy: Math.min(0.9, memoryUsage.heapUsed / memoryUsage.heapTotal + Math.random() * 0.05),
       health: 'Stable',
       violations: 0,
       nodeCount: await Message.count(),
@@ -308,7 +340,7 @@ app.post('/api/chat', apiLimiter, async (req: Request, res: Response) => {
   }
 });
 
-app.listen(PORT, async () => {
+const server = app.listen(PORT, async () => {
   logger.info(`--- 🥦 DreamBeesAI PRODUCTION-HARDENED Server with BroccoliDB ---`);
   logger.info(`Server listening on http://localhost:${PORT}`);
 
@@ -320,3 +352,35 @@ app.listen(PORT, async () => {
   const telegramBot = new DreamBeesAITelegramClient(handleTelegramMessage);
   await telegramBot.start();
 });
+
+/**
+ * PRODUCTION HARDENING: Graceful Shutdown
+ * Ensures all memory queues (SqliteQueue, BufferedDbPool) are drained and persisted.
+ */
+async function gracefulShutdown(signal: string) {
+  logger.info(`\n[NanoBanana] ${signal} received. Starting graceful shutdown...`);
+
+  // 1. Stop accepting new requests
+  server.close(() => {
+    logger.info('[NanoBanana] HTTP server closed.');
+  });
+
+  try {
+    // 2. Drain Telemetry Queue (SqliteQueue)
+    logger.info('[NanoBanana] Draining telemetry queue...');
+    await telemetryQueue.drain();
+
+    // 3. Flush Main Database Buffer
+    logger.info('[NanoBanana] Flushing database pool...');
+    await dbPool.stop();
+
+    logger.info('[NanoBanana] All resources safely persisted. Exit.');
+    process.exit(0);
+  } catch (err) {
+    logger.error('[NanoBanana] Error during shutdown:', err);
+    process.exit(1);
+  }
+}
+
+process.on('SIGTERM', () => gracefulShutdown('SIGTERM'));
+process.on('SIGINT', () => gracefulShutdown('SIGINT'));
