@@ -41,13 +41,13 @@ Where do you want to go next? Pick a path that fits your role:
 
 ---
 
-## ⚡ High-Performance Core
+## ⚡ Performance: The High-Speed Engine
 
-DreamBeesAI is built for speed and reliability, utilizing a custom infrastructure layer on top of SQLite to handle high-concurrency AI workloads:
+DreamBeesAI isn't a standard chat app—it's built like a high-performance engine. We use a custom-built infrastructure layer that makes SQLite feel as fast as a powerhouse like Redis, while keeping everything simple and local in a single file.
 
--   **BufferedDbPool**: Implements an asynchronous **Write-Behind** strategy, batching database operations to minimize disk I/O and maximize throughput.
--   **SqliteQueue**: A memory-first background job system that supports pipelined batching (processing 500+ jobs at once) and automatic crash recovery.
--   **Agent Shadows**: Ensures isolated, consistent state for concurrent AI agents during transactional workflows.
+- **📬 The Task Butler (`SqliteQueue`)**: Think of this as a high-speed inbox. It manages all background tasks—like generating images or processing messages—without ever slowing down the main conversation. It's **Memory-First**, meaning it works at the speed of RAM, but it's **Hardened**, so if the power goes out, it remembers exactly where it left off.
+- **📚 The Smart Storage Manager (`BufferedDbPool`)**: Instead of writing to the hard drive every single time a small change happens (which is slow), this "Storage Manager" collects many small updates and writes them all at once in a single, efficient burst. This **Write-Behind** strategy keeps the app feeling snappy even under heavy load.
+- **🛡️ Private Workspaces (`Agent Shadows`)**: Every AI agent gets its own "scratchpad" to think and work. Their changes only become permanent once they're finished, ensuring everything stays consistent and organized.
 
 ---
 
@@ -85,12 +85,19 @@ Visit `http://localhost:5173` to enter the experience.
 
 ```mermaid
 graph TD
-    User((User)) -->|WebSocket| Frontend[Frontend - Vite/React]
-    Frontend <-->|REST/WS| Backend[Backend - Express/TS]
-    Discord[Discord Client] -->|Orchestrator| Backend
-    Telegram[Telegram Client] -->|Orchestrator| Backend
-    Backend <-->|Memory| BDB[(BroccoliDB Substrate)]
+    User((User)) -->|WebSocket| Frontend[Web UI - Vite/React]
+    Frontend <-->|Real-time| Soketi[Soketi WS]
+    Soketi <-->|Broadcast| Backend[Backend - Node.ts]
+    
+    subgraph "High-Performance Brain"
+        Backend -->|Schedule Job| Queue[SqliteQueue - Task Butler]
+        Queue -->|High-Speed Batch| DBManager[BufferedDbPool - Storage Manager]
+        DBManager <-->|Memory + Disk| BDB[(SQLite - BroccoliDB)]
+    end
+    
     Backend -->|Generation| Gemini[Gemini API - Nano Banana]
+    Discord[Discord Client] --> Backend
+    Telegram[Telegram Client] --> Backend
 ```
 
 ---

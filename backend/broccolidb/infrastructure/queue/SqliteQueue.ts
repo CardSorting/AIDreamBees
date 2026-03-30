@@ -36,11 +36,6 @@ export class SqliteQueue<T> {
   private stopRequested = false;
   private wakeUpEmitter = new EventEmitter();
 
-  // Memory-First cache for pending jobs
-  private static sharedPendingMemoryBuffer = new Map<string, any[]>();
-  private static bufferMutex = new EventEmitter(); // Primitive lock
-  private static isLocked = false;
-
   private pendingMemoryBuffer: QueueJob<T>[] = [];
   private maxMemoryBufferSize = 5000; // Larger buffer for higher throughput
 
@@ -48,8 +43,6 @@ export class SqliteQueue<T> {
   private pruneDoneAgeMs: number;
   private defaultMaxAttempts: number;
   private baseRetryDelayMs: number;
-  private dbPath?: string;
-  private tableName?: string;
 
   constructor(options: SqliteQueueOptions = {}) {
     const {
@@ -57,16 +50,12 @@ export class SqliteQueue<T> {
       pruneDoneAgeMs = 86400000, // 24 hours default
       defaultMaxAttempts = 5,
       baseRetryDelayMs = 1000,
-      dbPath,
-      tableName,
     } = options;
 
     this.visibilityTimeoutMs = visibilityTimeoutMs;
     this.pruneDoneAgeMs = pruneDoneAgeMs;
     this.defaultMaxAttempts = defaultMaxAttempts;
     this.baseRetryDelayMs = baseRetryDelayMs;
-    this.dbPath = dbPath;
-    this.tableName = tableName;
   }
 
   /**
@@ -188,7 +177,7 @@ export class SqliteQueue<T> {
         },
         where: { column: 'id', value: ids, operator: 'IN' },
         layer: 'infrastructure',
-      }).catch(err => console.error('[SqliteQueue] Background status update failed:', err));
+      }).catch((err) => console.error('[SqliteQueue] Background status update failed:', err));
 
       return jobs.map((job) => ({
         ...job,
@@ -216,12 +205,22 @@ export class SqliteQueue<T> {
 
         if (jobs.length === 0) return [];
 
+        const nowMs = Date.now();
+
+        const mappedJobs = jobs.map((job) => ({
+          ...job,
+          payload: typeof job.payload === 'string' && (job.payload.startsWith('{') || job.payload.startsWith('['))
+            ? (JSON.parse(job.payload) as T)
+            : (job.payload as T),
+          updatedAt: nowMs,
+          attempts: job.attempts + 1,
+          status: 'processing' as const,
+        })) as unknown as QueueJob<T>[];
+
         // Split into immediate return and local buffer
-        const toReturn = jobs.slice(0, limit);
-        const toBuffer = jobs.slice(limit);
+        const toBuffer = mappedJobs.slice(limit);
 
         const allIds = jobs.map((j) => j.id);
-        const nowMs = Date.now();
 
         await dbPool.push(
           {
@@ -238,19 +237,9 @@ export class SqliteQueue<T> {
           agentId,
         );
 
-        const mappedJobs = jobs.map((job) => ({
-          ...job,
-          payload: typeof job.payload === 'string' && job.payload.startsWith('{') 
-            ? JSON.parse(job.payload) as T 
-            : job.payload as T,
-          updatedAt: nowMs,
-          attempts: job.attempts + 1,
-          status: 'processing' as const,
-        })) as unknown as QueueJob<T>[];
-
         // Fill memory buffer for next call
         if (toBuffer.length > 0) {
-          this.pendingMemoryBuffer.push(...mappedJobs.slice(limit));
+          this.pendingMemoryBuffer.push(...toBuffer);
         }
 
         return mappedJobs.slice(0, limit);
@@ -489,9 +478,13 @@ export class SqliteQueue<T> {
         completionFlushPending = true;
         // Use setImmediate for immediate flush, setTimeout for debounced
         if (pendingCompletions.length >= batchSize) {
-          setImmediate(() => flushCompletions().catch(console.error));
+          setImmediate(() => {
+            flushCompletions().catch((err) => console.error(err));
+          });
         } else {
-          setTimeout(() => flushCompletions().catch(console.error), 0);
+          setTimeout(() => {
+            flushCompletions().catch((err) => console.error(err));
+          }, 0);
         }
       }
     };
@@ -500,7 +493,9 @@ export class SqliteQueue<T> {
       pendingFailures.push({ id, error });
       if (pendingFailures.length >= batchSize && !completionFlushPending) {
         completionFlushPending = true;
-        setImmediate(() => flushCompletions().catch(console.error));
+        setImmediate(() => {
+          flushCompletions().catch((err) => console.error(err));
+        });
       }
     };
 
@@ -560,13 +555,15 @@ export class SqliteQueue<T> {
         inFlightJobs += jobs.length;
         jobPromises.add(batchPromise);
         
-        batchPromise.then(() => {
-          inFlightJobs -= jobs.length;
-          jobPromises.delete(batchPromise);
-        }).catch(() => {
-          inFlightJobs -= jobs.length;
-          jobPromises.delete(batchPromise);
-        });
+        batchPromise
+          .then(() => {
+            inFlightJobs -= jobs.length;
+            jobPromises.delete(batchPromise);
+          })
+          .catch(() => {
+            inFlightJobs -= jobs.length;
+            jobPromises.delete(batchPromise);
+          });
 
         // Non-blocking continuation - immediately try to dequeue more
         // No setImmediate needed - the await at top of loop handles backpressure
@@ -662,9 +659,13 @@ export class SqliteQueue<T> {
       if (shouldFlush && !completionFlushPending) {
         completionFlushPending = true;
         if (pendingCompletions.length >= batchSize) {
-          setImmediate(() => flushCompletions().catch(console.error));
+          setImmediate(() => {
+            flushCompletions().catch((err) => console.error(err));
+          });
         } else {
-          setTimeout(() => flushCompletions().catch(console.error), 0);
+          setTimeout(() => {
+            flushCompletions().catch((err) => console.error(err));
+          }, 0);
         }
       }
     };
@@ -673,7 +674,9 @@ export class SqliteQueue<T> {
       pendingFailures.push({ id, error });
       if (pendingFailures.length >= batchSize && !completionFlushPending) {
         completionFlushPending = true;
-        setImmediate(() => flushCompletions().catch(console.error));
+        setImmediate(() => {
+          flushCompletions().catch((err) => console.error(err));
+        });
       }
     };
 
@@ -742,13 +745,15 @@ export class SqliteQueue<T> {
         inFlightBatches++;
         batchPromises.add(currentBatchPromise);
         
-        currentBatchPromise.then(() => {
-          inFlightBatches--;
-          batchPromises.delete(currentBatchPromise);
-        }).catch(() => {
-          inFlightBatches--;
-          batchPromises.delete(currentBatchPromise);
-        });
+        currentBatchPromise
+          .then(() => {
+            inFlightBatches--;
+            batchPromises.delete(currentBatchPromise);
+          })
+          .catch(() => {
+            inFlightBatches--;
+            batchPromises.delete(currentBatchPromise);
+          });
 
         // Immediately try to dequeue next batch (pipelining)
       }

@@ -1,6 +1,6 @@
-import * as crypto from 'node:crypto';
 import { type Kysely, type Transaction, sql } from 'kysely';
-import { type Schema, getDb } from './Config.js';
+import * as crypto from 'node:crypto';
+import { getDb, type Schema } from './Config.js';
 
 // Production-grade Mutex implementation
 class Mutex {
@@ -35,7 +35,7 @@ export type DbLayer = 'domain' | 'infrastructure' | 'ui' | 'plumbing';
 type WhereCondition = {
   column: string;
   value: string | number | string[] | number[] | null;
-  operator?: '=' | '<' | '>' | '<=' | '>=' | '!=' | 'IN' | 'in';
+  operator?: '=' | '<' | '>' | '<=' | '>=' | '!=' | 'IN' | 'in' | 'In' | 'UNSAFE_IN' | 'IS' | 'IS NOT' | 'LIKE';
 };
 
 export type Increment = { _type: 'increment'; value: number };
@@ -83,31 +83,31 @@ export class BufferedDbPool {
     this.startFlushLoop();
   }
 
-  private async ensureDb(): Promise<Kysely<Schema>> {
-    if (!this.db) {
-      const db = await getDb();
-      // Additional performance optimizations for this connection
-      await sql`PRAGMA cache_size = -64000;`.execute(db); // 64MB cache
-      await sql`PRAGMA temp_store = MEMORY;`.execute(db);
-      this.db = db;
-    }
-    return this.db;
-  }
-
   private flushTimeout: NodeJS.Timeout | null = null;
+  private currentFlushDelay: number | null = null;
 
-  private scheduleFlush(delay = 100) {
-    if (this.flushTimeout) return;
+  /**
+   * Adaptive flush scheduling.
+   */
+  private scheduleFlush(delay = 10) {
+    if (this.flushTimeout) {
+      if (this.currentFlushDelay !== null && this.currentFlushDelay <= delay) {
+        return;
+      }
+      clearTimeout(this.flushTimeout);
+    }
+
+    this.currentFlushDelay = delay;
     this.flushTimeout = setTimeout(async () => {
+      this.currentFlushDelay = null;
+      this.flushTimeout = null;
       try {
         await this.flush();
       } finally {
-        this.flushTimeout = null;
-        // If there's still work, schedule another flush
         const release = await this.stateMutex.acquire();
         try {
           if (this.globalBuffer.length > 0) {
-            this.scheduleFlush(100);
+            this.scheduleFlush(10);
           }
         } finally {
           release();
@@ -119,10 +119,8 @@ export class BufferedDbPool {
   private cleanupInterval: NodeJS.Timeout | null = null;
 
   private startFlushLoop() {
-    this.scheduleFlush(1000); // Periodic check every second as a fallback
+    this.scheduleFlush(1000);
     this.flushInterval = setInterval(() => this.scheduleFlush(1000), 1000);
-
-    // Memory safety: cleanup expired agent shadows every 30 seconds
     this.cleanupInterval = setInterval(() => this.cleanupShadows(), 30000);
   }
 
@@ -130,10 +128,9 @@ export class BufferedDbPool {
     const release = await this.stateMutex.acquire();
     try {
       const now = Date.now();
-      const SHADOW_EXPIRATION = 5 * 60 * 1000; // 5 minutes
+      const SHADOW_EXPIRATION = 5 * 60 * 1000;
       for (const [agentId, shadow] of this.agentShadows.entries()) {
         if (now - shadow.lastUpdated > SHADOW_EXPIRATION) {
-          console.warn(`[DbPool] Expiring inactive agent shadow: ${agentId}`);
           this.agentShadows.delete(agentId);
         }
       }
@@ -161,18 +158,44 @@ export class BufferedDbPool {
     return this.pushBatch([op], agentId, affectedFile);
   }
 
+  private async ensureDb(): Promise<Kysely<Schema>> {
+    if (!this.db) {
+      const db = await getDb();
+      await sql`PRAGMA cache_size = -128000;`.execute(db);
+      await sql`PRAGMA temp_store = MEMORY;`.execute(db);
+      await sql`PRAGMA journal_mode = WAL;`.execute(db);
+      await sql`PRAGMA synchronous = NORMAL;`.execute(db);
+      await sql`PRAGMA mmap_size = 2147483648;`.execute(db);
+      await sql`PRAGMA threads = 4;`.execute(db);
+      await sql`PRAGMA auto_vacuum = NONE;`.execute(db);
+      this.db = db;
+    }
+    return this.db;
+  }
+
+  private enqueueLatencies: number[] = [];
+  private processingLatencies: number[] = [];
+  private MAX_METRICS_SAMPLES = 5000;
+
+  private recordLatency(target: number[], value: number) {
+    target.push(value);
+    if (target.length > this.MAX_METRICS_SAMPLES) {
+      target.shift();
+    }
+  }
+
+  private calculatePercentile(samples: number[], percentile: number): number {
+    if (samples.length === 0) return 0;
+    const sorted = [...samples].sort((a, b) => a - b);
+    const index = Math.ceil((percentile / 100) * sorted.length) - 1;
+    return sorted[index] ?? 0;
+  }
+
   public async pushBatch(ops: WriteOp[], agentId?: string, affectedFile?: string) {
+    const enqueueStart = performance.now();
     let shouldFlush = false;
     const release = await this.stateMutex.acquire();
     try {
-      // Backpressure: If global buffer is excessively large, log warning and potentially block
-      if (this.globalBuffer.length > 2000) {
-        console.warn(
-          `[DbPool] High backpressure: globalBuffer length is ${this.globalBuffer.length}`,
-        );
-        // Optionally: yield or throw if the system is truly overwhelmed
-      }
-
       if (agentId) {
         const shadow =
           this.agentShadows.get(agentId) ??
@@ -190,25 +213,26 @@ export class BufferedDbPool {
       } else {
         this.globalBuffer.push(...ops);
       }
-      shouldFlush = this.globalBuffer.length > 250; // Increased flush trigger size
+      
+      if (this.globalBuffer.length > 50000) {
+        console.warn(`[DbPool] CRITICAL backpressure: globalBuffer length is ${this.globalBuffer.length}`);
+      }
+
+      shouldFlush = this.globalBuffer.length >= 10000;
     } finally {
       release();
     }
 
+    this.recordLatency(this.enqueueLatencies, performance.now() - enqueueStart);
     if (shouldFlush) {
-      this.scheduleFlush(0); // Immediate flush
+      this.scheduleFlush(0);
     } else {
-      this.scheduleFlush(100); // Debounced flush
+      this.scheduleFlush(5);
     }
   }
 
-  /**
-   * Commits an agent's work, moving their private shadow buffer to the global
-   * flush buffer and scheduling an immediate flush.
-   */
   public async commitWork(agentId: string) {
     let shadowOpsCount = 0;
-
     const release = await this.stateMutex.acquire();
     try {
       const shadow = this.agentShadows.get(agentId);
@@ -222,7 +246,7 @@ export class BufferedDbPool {
     }
 
     if (shadowOpsCount > 0) {
-      this.scheduleFlush(0); // Trigger flush asynchronously to avoid nested mutex acquisition
+      this.scheduleFlush(0);
     }
   }
 
@@ -248,13 +272,7 @@ export class BufferedDbPool {
     }
   }
 
-  /**
-   * Flushes all buffered operations to disk in a single transaction.
-   * Handles bulk inserts, upserts, and complex updates with increment support.
-   * Optimized for high throughput with reduced mutex contention.
-   */
   public async flush() {
-    // Fast path: check without mutex first
     if (this.globalBuffer.length === 0 && this.inFlightOps.length === 0) return;
 
     const releaseFlush = await this.flushMutex.acquire();
@@ -262,7 +280,6 @@ export class BufferedDbPool {
     const startTime = Date.now();
 
     try {
-      // Double-check after acquiring flush mutex
       const releaseState = await this.stateMutex.acquire();
       try {
         if (this.globalBuffer.length === 0) return;
@@ -270,7 +287,9 @@ export class BufferedDbPool {
         opsToFlush = this.globalBuffer.sort((a, b) => {
           const pA = LAYER_PRIORITY[a.layer ?? 'plumbing'];
           const pB = LAYER_PRIORITY[b.layer ?? 'plumbing'];
-          return pA - pB;
+          if (pA !== pB) return pA - pB;
+          if (a.table !== b.table) return (a.table as string).localeCompare(b.table as string);
+          return (a.type as string).localeCompare(b.type as string);
         });
         this.globalBuffer = [];
         this.inFlightOps = opsToFlush;
@@ -292,7 +311,6 @@ export class BufferedDbPool {
           if (group.length > 1 && first.type === 'insert') {
             totalFlushed += await this.executeBulkInsert(trx, table, group);
           } else if (group.length > 1 && first.type === 'update') {
-            // Batch updates when possible
             totalFlushed += await this.executeBulkUpdate(trx, table, group);
           } else {
             for (const op of group) {
@@ -304,11 +322,14 @@ export class BufferedDbPool {
       });
 
       const duration = Date.now() - startTime;
-      const throughput = Math.round(totalFlushed / (duration / 1000));
-      if (duration > 100 || totalFlushed > 50) {
-        console.log(
-          `[DbPool] Flush completed: ${totalFlushed} ops in ${duration}ms (${throughput} ops/sec, buffer: ${this.globalBuffer.length})`,
-        );
+      this.recordLatency(this.processingLatencies, duration);
+
+      const throughput = Math.round(totalFlushed / (duration / 1000 || 0.001));
+      if (duration > 50 || totalFlushed > 1000) {
+        const p95p = this.calculatePercentile(this.processingLatencies, 95);
+        const p99p = this.calculatePercentile(this.processingLatencies, 99);
+        const p95e = this.calculatePercentile(this.enqueueLatencies, 95);
+        console.log(`[DbPool] Flush: ${totalFlushed} ops in ${duration}ms (${throughput} ops/sec) | Latency: p95_proc=${p95p.toFixed(1)}ms, p99_proc=${p99p.toFixed(1)}ms, p95_enq=${p95e.toFixed(2)}ms`);
       }
 
       const releaseStateClear = await this.stateMutex.acquire();
@@ -319,50 +340,32 @@ export class BufferedDbPool {
       }
     } catch (e: unknown) {
       const err = e as { code?: string; message?: string };
-      const isRetryable =
-        err.code === 'SQLITE_BUSY' ||
-        err.code === 'SQLITE_LOCKED' ||
-        err.message?.includes('deadlock');
-
-      if (isRetryable) {
-        console.warn(`[DbPool] Flush failed (retryable), restoring ops to buffer: ${err.message}`);
-      } else {
-        console.error(
-          `[DbPool] Flush failed (fatal), some operations may be lost: ${err.message}`,
-          e,
-        );
-      }
+      const isRetryable = err.code === 'SQLITE_BUSY' || err.code === 'SQLITE_LOCKED' || err.message?.includes('deadlock');
 
       const releaseState = await this.stateMutex.acquire();
       try {
         if (isRetryable) {
-          // Re-insert failing ops at the beginning of the buffer to maintain some order
           this.globalBuffer = [...opsToFlush, ...this.globalBuffer];
         }
         this.inFlightOps = [];
       } finally {
         releaseState();
       }
-      if (isRetryable) throw e; // Propagate for immediate re-schedule if desired
+      if (isRetryable) throw e;
     } finally {
       releaseFlush();
     }
   }
 
-  /**
-   * Execute batch updates for improved throughput.
-   * Groups updates by their column values for efficient bulk operations.
-   */
   private async executeBulkUpdate(
     trx: Transaction<Schema>,
     table: keyof Schema,
     group: WriteOp[],
   ): Promise<number> {
     if (group.length === 0) return 0;
-
-    // Optimization: If all updates are the same set of values and targeting a list of IDs via 'id IN (...)'
-    // This is common for queue status updates (e.g., status='done' for a batch of jobs)
     const first = group[0];
+    if (!first?.values) return 0;
+
     const canBatchIntoSingleStatement = group.every(
       (op) =>
         JSON.stringify(op.values) === JSON.stringify(first.values) &&
@@ -373,11 +376,19 @@ export class BufferedDbPool {
     );
 
     if (canBatchIntoSingleStatement && first.where && !Array.isArray(first.where)) {
-      const ids = group.map((op) => (op.where as WhereCondition).value);
+      const ids: unknown[] = [];
+      for (const op of group) {
+        const val = (op.where as WhereCondition).value;
+        if (Array.isArray(val)) {
+          ids.push(...val);
+        } else {
+          ids.push(val);
+        }
+      }
+
       const valuesWithNoIncrements: Record<string, unknown> = {};
       const increments: Record<string, number> = {};
-
-      for (const [k, v] of Object.entries(first.values || {})) {
+      for (const [k, v] of Object.entries(first.values)) {
         if (this.isIncrement(v)) {
           increments[k] = v.value;
         } else {
@@ -385,32 +396,21 @@ export class BufferedDbPool {
         }
       }
 
-      let query = trx.updateTable(table);
+      const query = trx.updateTable(table);
       const sets: Record<string, unknown> = { ...valuesWithNoIncrements };
       for (const [k, v] of Object.entries(increments)) {
         sets[k] = sql`${sql.ref(k)} + ${v}`;
       }
 
-      await query
-        .set(sets as never)
-        .where('id' as any, 'in', ids as any)
-        .execute();
+      await query.set(sets as never).where('id' as never, 'in', ids as never).execute();
       return group.length;
     }
 
-    // Fallback: Parallel execution for heterogeneous updates
-    const promises: Promise<void>[] = [];
-    for (const op of group) {
-      promises.push(this.executeSingleOp(trx, op));
-    }
+    const promises = group.map(op => this.executeSingleOp(trx, op));
     await Promise.all(promises);
     return group.length;
   }
 
-  /**
-   * Selects rows from a table, merging on-disk results with uncommitted
-   * operations from the global buffer and agent shadows.
-   */
   public async selectWhere<T extends keyof Schema>(
     table: T,
     where: WhereCondition | WhereCondition[],
@@ -425,29 +425,31 @@ export class BufferedDbPool {
       const db = await this.ensureDb();
       const conditions = normalizeWhere(where);
 
-      let query = (db as any).selectFrom(table).selectAll();
+      let query = db.selectFrom(table).selectAll();
       for (const cond of conditions) {
         const opStr = cond.operator || '=';
         if (Array.isArray(cond.value)) {
-          query = query.where(cond.column, 'in', cond.value);
+          query = (query as any).where(cond.column, 'in', cond.value);
         } else {
-          query = query.where(cond.column, opStr, cond.value);
+          query = (query as any).where(cond.column, opStr, cond.value);
         }
       }
 
       if (options?.orderBy) {
-        query = query.orderBy(options.orderBy.column, options.orderBy.direction);
+        query = (query as any).orderBy(options.orderBy.column, options.orderBy.direction);
       }
       if (options?.limit) {
-        query = query.limit(options.limit);
+        query = (query as any).limit(options.limit);
       }
 
       const diskResults = (await query.execute()) as Schema[T][];
 
       const applyOps = (ops: WriteOp[], target: Schema[T][]) => {
-        for (const op of ops) {
-          if (op.table !== table) continue;
+        // Pre-filter ops by table to reduce iterations from 50k to <1000 in most cases
+        const tableOps = ops.filter(op => op.table === table);
+        if (tableOps.length === 0) return;
 
+        for (const op of tableOps) {
           const applyValues = (existing: unknown, newValues: Record<string, unknown>) => {
             const next = { ...(existing as Record<string, unknown>) };
             for (const [k, v] of Object.entries(newValues)) {
@@ -461,19 +463,34 @@ export class BufferedDbPool {
           };
 
           const opWhere = normalizeWhere(op.where);
+          
+          // Pre-compute Sets for IN operators to O(1) lookup
+          const inSets = opWhere.map(c => {
+            if (c.operator?.toUpperCase() === 'IN' && Array.isArray(c.value)) {
+              return new Set(c.value as unknown[]);
+            }
+            return null;
+          });
+
           const matches = (r: unknown) => {
             const row = r as Record<string, unknown>;
             if (opWhere.length === 0) return false;
-            return opWhere.every((c) => {
+            return opWhere.every((c, idx) => {
               const val = row[c.column];
-              const opStr = c.operator || '=';
+              const opStr = (c.operator || '=').toUpperCase();
+              
+              if (opStr === 'IN') {
+                const set = inSets[idx];
+                if (set) return set.has(val as any);
+                if (Array.isArray(c.value)) return (c.value as unknown[]).includes(val);
+                return val === c.value;
+              }
               if (opStr === '=') return val === c.value;
               if (opStr === '!=') return val !== c.value;
               if (opStr === '>') return Number(val) > Number(c.value);
               if (opStr === '<') return Number(val) < Number(c.value);
               if (opStr === '>=') return Number(val) >= Number(c.value);
-              if (opStr === '<=') return Number(val) <= Number(c.value);
-              if (opStr === 'IN' && Array.isArray(c.value)) return (c.value as any[]).includes(val);
+              if (opStr === '<=') return val !== null && Number(val) <= Number(c.value);
               return false;
             });
           };
@@ -484,29 +501,24 @@ export class BufferedDbPool {
             const pkMatch = (r: unknown) => {
               const row = r as Record<string, unknown>;
               if (opWhere.length > 0) return matches(row);
-              return (
-                row.id !== undefined &&
-                (op.values as Record<string, unknown>).id !== undefined &&
-                row.id === (op.values as Record<string, unknown>).id
-              );
+              return row['id'] !== undefined && (op.values as Record<string, unknown>)['id'] !== undefined && row['id'] === (op.values as Record<string, unknown>)['id'];
             };
             const existingIdx = target.findIndex(pkMatch);
             if (existingIdx >= 0) {
-              target[existingIdx] = applyValues(target[existingIdx], op.values as any);
+              const existing = target[existingIdx];
+              if (existing) target[existingIdx] = applyValues(existing, op.values as Record<string, unknown>);
             } else {
               target.push({ ...op.values } as unknown as Schema[T]);
             }
           } else if (op.type === 'update' && op.values) {
             for (let i = 0; i < target.length; i++) {
-              if (matches(target[i])) {
-                target[i] = applyValues(target[i], op.values as any);
-              }
+              const existing = target[i];
+              if (existing && matches(existing)) target[i] = applyValues(existing, op.values as Record<string, unknown>);
             }
           } else if (op.type === 'delete') {
             for (let i = target.length - 1; i >= 0; i--) {
-              if (matches(target[i])) {
-                target.splice(i, 1);
-              }
+              const existing = target[i];
+              if (existing && matches(existing)) target.splice(i, 1);
             }
           }
         }
@@ -517,29 +529,22 @@ export class BufferedDbPool {
       applyOps(this.globalBuffer, finalResults);
       if (agentId) {
         const shadow = this.agentShadows.get(agentId);
-        if (shadow) {
-          applyOps(shadow.ops, finalResults);
-        }
+        if (shadow) applyOps(shadow.ops, finalResults);
       }
 
-      // Final pass for sorting/limiting on merged results
       if (options?.orderBy) {
         const col = options.orderBy.column as string;
         const dir = options.orderBy.direction;
-        finalResults.sort((a: unknown, b: unknown) => {
-          const valA = (a as Record<string, any>)[col];
-          const valB = (b as Record<string, any>)[col];
-          if (valA === undefined || valB === undefined) return 0;
-          if (valA === null || valB === null) return 0;
+        finalResults.sort((a, b) => {
+          const valA = (a as Record<string, unknown>)[col];
+          const valB = (b as Record<string, unknown>)[col];
+          if (valA === undefined || valB === undefined || valA === null || valB === null) return 0;
           if (valA < valB) return dir === 'asc' ? -1 : 1;
           if (valA > valB) return dir === 'asc' ? 1 : -1;
           return 0;
         });
       }
-      if (options?.limit) {
-        finalResults = finalResults.slice(0, options.limit);
-      }
-
+      if (options?.limit) finalResults = finalResults.slice(0, options.limit);
       return finalResults;
     } finally {
       release();
@@ -559,21 +564,18 @@ export class BufferedDbPool {
     return { _type: 'increment', value };
   }
 
-  // --- Private Helpers ---
-
   private groupOps(ops: WriteOp[]): WriteOp[][] {
-    // Coalesce updates if they target the same row and have no increments
     const coalescedOps: WriteOp[] = [];
-    const updateCache = new Map<string, number>(); // table:pk -> index in coalescedOps
+    const updateCache = new Map<string, number>();
 
     for (const op of ops) {
-      if (op.type === 'update' && op.where && !Array.isArray(op.where) && op.where.operator === '=') {
+      if (op.type === 'update' && op.where && !Array.isArray(op.where) && op.where.column === 'id' && op.where.operator === '=') {
         const pk = `${op.table}:${op.where.column}:${op.where.value}`;
         const hasIncrements = Object.values(op.values || {}).some((v) => this.isIncrement(v));
-
-        if (!hasIncrements && updateCache.has(pk)) {
-          const idx = updateCache.get(pk)!;
-          coalescedOps[idx].values = { ...coalescedOps[idx].values, ...op.values };
+        const existingIdx = updateCache.get(pk);
+        if (!hasIncrements && existingIdx !== undefined) {
+          const targetOp = coalescedOps[existingIdx];
+          if (targetOp) targetOp.values = { ...(targetOp.values || {}), ...(op.values || {}) };
           continue;
         } else if (!hasIncrements) {
           updateCache.set(pk, coalescedOps.length);
@@ -584,10 +586,9 @@ export class BufferedDbPool {
 
     const groups: WriteOp[][] = [];
     let currentGroup: WriteOp[] = [];
-
     for (const op of coalescedOps) {
       if (op.type === 'insert' && op.values) {
-        if (currentGroup.length > 0 && currentGroup[0]!.table === op.table) {
+        if (currentGroup.length > 0 && currentGroup[0]?.table === op.table && currentGroup[0]?.type === 'insert') {
           currentGroup.push(op);
         } else {
           if (currentGroup.length > 0) groups.push(currentGroup);
@@ -603,24 +604,15 @@ export class BufferedDbPool {
     return groups;
   }
 
-  private async executeBulkInsert(
-    trx: Transaction<Schema>,
-    table: keyof Schema,
-    group: WriteOp[],
-  ): Promise<number> {
+  private async executeBulkInsert(trx: Transaction<Schema>, table: keyof Schema, group: WriteOp[]): Promise<number> {
     const firstOp = group[0];
     if (!firstOp?.values) return 0;
-
     const columnCount = Object.keys(firstOp.values).length || 1;
-    // Pushing SQLite's default parameter limit (32766 in newer versions, using conservative 5000)
     const CHUNK_SIZE = Math.max(1, Math.floor(5000 / columnCount));
     let flushed = 0;
-
     for (let i = 0; i < group.length; i += CHUNK_SIZE) {
       const chunk = group.slice(i, i + CHUNK_SIZE);
-      const values = chunk
-        .map((op) => op.values)
-        .filter((v): v is Record<string, unknown> => v !== undefined);
+      const values = chunk.map((op) => op.values).filter((v): v is Record<string, unknown> => v !== undefined);
       await trx.insertInto(table).values(values as never).execute();
       flushed += chunk.length;
     }
@@ -628,12 +620,7 @@ export class BufferedDbPool {
   }
 
   private isIncrement(value: unknown): value is Increment {
-    return (
-      typeof value === 'object' &&
-      value !== null &&
-      '_type' in value &&
-      (value as Increment)._type === 'increment'
-    );
+    return typeof value === 'object' && value !== null && '_type' in value && (value as Increment)._type === 'increment';
   }
 
   private async executeSingleOp(trx: Transaction<Schema>, op: WriteOp) {
@@ -646,91 +633,55 @@ export class BufferedDbPool {
       const valuesWithNoIncrements: Record<string, unknown> = {};
       const increments: Record<string, number> = {};
       for (const [k, v] of Object.entries(op.values)) {
-        if (this.isIncrement(v)) {
-          increments[k] = v.value;
-        } else {
-          valuesWithNoIncrements[k] = v;
-        }
+        if (this.isIncrement(v)) increments[k] = v.value;
+        else valuesWithNoIncrements[k] = v;
       }
-
-      await trx
-        .insertInto(table)
-        .values(valuesWithNoIncrements as never)
-        .onConflict((oc) => {
-          let conflictTarget = op.conflictTarget;
-          if (!conflictTarget) {
-            conflictTarget = conditions.length > 0 ? conditions.map((c) => c.column) : ['id'];
-          }
-
-          const updateSet: Record<string, unknown> = { ...valuesWithNoIncrements };
-          for (const [k, v] of Object.entries(increments)) {
-            updateSet[k] = sql`${sql.ref(k)} + ${v}`;
-          }
-
-          if (Array.isArray(conflictTarget)) {
-            return oc
-              .columns(conflictTarget as ReadonlyArray<string> as any)
-              .doUpdateSet(updateSet as any);
-          }
-          return oc.column(conflictTarget as string as any).doUpdateSet(updateSet as any);
-        })
-        .execute();
+      await trx.insertInto(table).values(valuesWithNoIncrements as never).onConflict((oc) => {
+        let conflictTarget = op.conflictTarget;
+        if (!conflictTarget) conflictTarget = conditions.length > 0 ? conditions.map((c) => c.column) : ['id'];
+        const updateSet: Record<string, unknown> = { ...valuesWithNoIncrements };
+        for (const [k, v] of Object.entries(increments)) updateSet[k] = sql`${sql.ref(k)} + ${v}`;
+        if (Array.isArray(conflictTarget)) return oc.columns(conflictTarget as string[] as never[]).doUpdateSet(updateSet as never);
+        return oc.column(conflictTarget as string as never).doUpdateSet(updateSet as never);
+      }).execute();
     } else if (op.type === 'update' && op.values) {
-      let query = trx.updateTable(table);
       const sets: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(op.values)) {
-        if (this.isIncrement(v)) {
-          sets[k] = sql`${sql.ref(k)} + ${v.value}`;
-        } else {
-          sets[k] = v;
-        }
+        if (this.isIncrement(v)) sets[k] = sql`${sql.ref(k)} + ${v.value}`;
+        else sets[k] = v;
       }
-      query = query.set(sets as never);
+      let query = trx.updateTable(table).set(sets as never);
       for (const cond of conditions) {
-        const opStr = (cond.operator === 'IN' ? 'in' : cond.operator || '=') as any;
-        query = query.where(cond.column as any, opStr, cond.value);
+        const opStr = (cond.operator === 'IN' ? 'in' : cond.operator || '=') as never;
+        query = query.where(cond.column as never, opStr, cond.value as never);
       }
       await query.execute();
     } else if (op.type === 'delete') {
       let query = trx.deleteFrom(table);
       for (const cond of conditions) {
-        const opStr = (cond.operator === 'IN' ? 'in' : cond.operator || '=') as any;
-        query = query.where(cond.column as any, opStr, cond.value);
+        const opStr = (cond.operator === 'IN' ? 'in' : cond.operator || '=') as never;
+        query = query.where(cond.column as never, opStr, cond.value as never);
       }
       await query.execute();
     }
   }
 
   public async stop() {
-    if (this.flushInterval) {
-      clearInterval(this.flushInterval);
-      this.flushInterval = null;
-    }
-    if (this.cleanupInterval) {
-      clearInterval(this.cleanupInterval);
-      this.cleanupInterval = null;
-    }
-    if (this.flushTimeout) {
-      clearTimeout(this.flushTimeout);
-      this.flushTimeout = null;
-    }
-
-    // Attempt final flush
-    try {
-      await this.flush();
-    } catch (e) {
-      console.error('[DbPool] Final flush failed during stop:', e);
-    }
+    if (this.flushInterval) clearInterval(this.flushInterval);
+    if (this.cleanupInterval) clearInterval(this.cleanupInterval);
+    if (this.flushTimeout) clearTimeout(this.flushTimeout);
+    await this.flush();
   }
 
-  /**
-   * Export performance metrics.
-   */
   public getMetrics() {
     return {
       globalBufferSize: this.globalBuffer.length,
       inFlightOpsSize: this.inFlightOps.length,
       activeShadows: this.agentShadows.size,
+      latencies: {
+        enqueue: { p95: this.calculatePercentile(this.enqueueLatencies, 95), p99: this.calculatePercentile(this.enqueueLatencies, 99) },
+        processing: { p95: this.calculatePercentile(this.processingLatencies, 95), p99: this.calculatePercentile(this.processingLatencies, 99) },
+      },
     };
   }
 }

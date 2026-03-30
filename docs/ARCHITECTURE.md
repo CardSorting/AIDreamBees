@@ -6,10 +6,11 @@ DreamBeesAI is designed as a modular, real-time messaging ecosystem for AI agent
 
 ## ⚡ Simple Overview (TL;DR)
 
-Think of DreamBeesAI as a **"Digital Brain"** that lives where you do (Web, Discord, Telegram). 
--   **The Web UI** is your primary dashboard.
--   **Discord & Telegram** are "remote sensors" that talk to the same brain.
--   **BroccoliDB** is the brain's long-term memory, keeping your creative journey safe and local.
+Think of DreamBeesAI as a **"Digital Hive"** that lives where you do (Web, Discord, Telegram). 
+- **The Web UI**: Your home base.
+- **Discord & Telegram**: Remote sensors that let you talk to the hive from anywhere.
+- **The Task Butler (`SqliteQueue`)**: The busy bees working in the background to handle the heavy lifting.
+- **BroccoliDB**: The hive's long-term memory, keeping your creative journey safe, private, and local.
 
 ---
 
@@ -19,16 +20,21 @@ The system follows a traditional client-server architecture but introduces speci
 
 ```mermaid
 graph TD
-    User((Users)) -->|Web Interface| Frontend[Frontend - React]
+    User((Users)) -->|Web Interface| Frontend[Frontend - Vite/React]
     Frontend <-->|WebSockets| Soketi[Soketi WS Server]
-    Soketi <-->|Broadcast| Backend[Backend - Express]
-    Backend <-->|Persistence| BDB[(BroccoliDB Substrate)]
+    Soketi <-->|Real-time Events| Backend[Backend - Express]
+    
+    subgraph "The High-Performance Engine"
+        Backend -->|New Job| Queue[SqliteQueue - Task Butler]
+        Queue -->|Batch Process| DBManager[BufferedDbPool - Storage Manager]
+        DBManager <-->|Buffered I/O| BDB[(BroccoliDB - SQLite)]
+    end
     
     Discord[Discord API] <-->|Discord Client| Orchestrator[Cognitive Orchestrator]
     Telegram[Telegram API] <-->|Telegram Client| Orchestrator
     
     Orchestrator <--> Backend
-    Backend -->|Generation| Gemini[Gemini 3.1 API]
+    Backend -->|Request| Gemini[Gemini 3.1 API]
 ```
 
 ---
@@ -51,18 +57,16 @@ BroccoliDB is 100% local. It uses SQLite for high-performance persistence, ensur
 
 To support the real-time demands of the Cognitive Substrate, AIDreamBees uses a custom infrastructure layer designed for high throughput and reliability on top of SQLite.
 
-### 1. BufferedDbPool: Asynchronous Write-Behind
-The `BufferedDbPool` is a high-performance database wrapper that implements a **Write-Behind** strategy. 
-- **Batching**: Instead of executing every write immediately, it buffers operations and flushes them to disk in large, atomic transactions. This drastically reduces disk I/O overhead.
-- **Agent Shadows**: It maintains isolated "shadow" buffers for concurrent agents (like different bot orchestrators), ensuring that uncommitted state is visible to the agent that created it without leaking to others prematurely.
-- **Atomic Increments**: Supports atomic field increments within the buffered layer, essential for maintaining counters and job attempt tracking without race conditions.
+### 1. BufferedDbPool: The Smart Storage Manager
+The `BufferedDbPool` is the secret sauce that makes our local database feel as fast as a cloud-scale engine.
+- **The Batch Clerk**: Instead of writing to the hard drive every time something small happens, it waits and writes many things at once. This **Write-Behind** strategy keeps the app blazing fast even when hundreds of things are happening simultaneously.
+- **Agent Shadows**: Think of these as personal "scratchpads" for every process. Changes stay in the scratchpad until the work is finished, preventing different parts of the brain from getting confused or seeing "half-finished" thoughts.
 
-### 2. SqliteQueue: Hardened Background Processing
-The `SqliteQueue` provides a production-grade background job system built directly on the `BufferedDbPool`.
-- **Memory-First Strategy**: It uses a local memory buffer for immediate job dispatch, reducing database polling latency to near-zero for high-frequency tasks.
-- **Pipelined Batching**: Supports processing jobs in true batches (e.g., 500-1000 at a time), which is 10x-100x more efficient than processing jobs individually.
-- **Exponential Backoff**: Built-in retry logic with configurable backoff ensures that transient failures (like API rate limits) don't crash the system.
-- **Stale Job Reclamation**: Automatically detects and recovers jobs stuck in "processing" due to unexpected system crashes, ensuring zero job loss.
+### 2. SqliteQueue: The High-Speed Task Butler
+The `SqliteQueue` handles all the tasks that take time (like waiting for the AI to imagine an image) without ever letting the user wait.
+- **Instant Response**: Jobs are handled in memory first, so the system is ready for the next task in milliseconds.
+- **Massive Throughput**: It can process jobs in huge batches (up to 500-1000 at once), making it incredibly efficient.
+- **Never Forgets**: If the system crashes, its "Stale Job Reclamation" feature automatically finds and resumes any jobs that were interrupted, ensuring zero data loss.
 
 ---
 
