@@ -51,6 +51,7 @@ interface SystemHealth {
 const App = () => {
   // --- Data Fetching & Sync ---
   const [messages, setMessages] = useState<Message[]>([]);
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [inputValue, setInputValue] = useState('');
   const [selectedImage, setSelectedImage] = useState<string | null>(null); // Base64 string
   const [isThinking, setIsThinking] = useState(false);
@@ -284,7 +285,7 @@ const App = () => {
 
   return (
     <>
-      <aside className="sidebar">
+      <aside className={`sidebar ${isSidebarOpen ? 'open' : ''}`}>
         <div className="logo-container">
           <div className="logo-icon">
             <Bee size={20} />
@@ -304,7 +305,7 @@ const App = () => {
         </nav>
 
         <div className="sidebar-section">
-          <div className="section-title">Generation Settings</div>
+          <div className="section-title">Nectar Yields</div>
           <button
             type="button"
             className={`nav-item button-like ${gridMode ? 'active' : ''}`}
@@ -313,7 +314,7 @@ const App = () => {
             <div className={`toggle-switch ${gridMode ? 'on' : ''}`}>
               <div className="toggle-knob" />
             </div>
-            <span>2x2 Grid Mode</span>
+            <span>Comb Layout</span>
           </button>
         </div>
 
@@ -330,15 +331,39 @@ const App = () => {
         </div>
       </aside>
 
+      {isSidebarOpen && (
+        <div
+          className="sidebar-overlay"
+          onClick={() => setIsSidebarOpen(false)}
+          onKeyDown={(e) => e.key === 'Escape' && setIsSidebarOpen(false)}
+          role="button"
+          tabIndex={0}
+          aria-label="Close sidebar"
+        />
+      )}
+
       <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
 
       <main className="main-chat">
         <header className="chat-header">
-          <div className="status-badge">
-            <div className={`status-dot ${connectionStatus !== 'connected' ? 'connecting' : ''}`} />
-            <span>{connectionStatus === 'connected' ? 'Hive Mind Online' : 'Connecting to Swarm...'}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+            <button
+              type="button"
+              className="menu-toggle"
+              onClick={() => setIsSidebarOpen(!isSidebarOpen)}
+            >
+              {isSidebarOpen ? <X size={20} /> : <Bee size={20} />}
+            </button>
+            <div className="status-badge">
+              <div
+                className={`status-dot ${connectionStatus !== 'connected' ? 'connecting' : ''}`}
+              />
+              <span className="status-text">
+                {connectionStatus === 'connected' ? 'Hive Mind Online' : 'Connecting...'}
+              </span>
+            </div>
           </div>
-          <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
+          <div className="header-title">
             <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>Swarm-Powered AI</span>
           </div>
         </header>
@@ -365,9 +390,9 @@ const App = () => {
             <div key={msg.id} className={`message-wrapper ${msg.type}`}>
               <div className="message-meta">
                 {msg.type === 'bot' ? (
-                  <Bot size={14} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
+                  <Bee size={14} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
                 ) : null}
-                {msg.user} •{' '}
+                {msg.type === 'bot' ? 'Swarm Logic' : msg.user} •{' '}
                 {new Date(msg.timestamp).toLocaleTimeString([], {
                   hour: '2-digit',
                   minute: '2-digit',
