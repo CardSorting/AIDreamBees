@@ -8,12 +8,11 @@ import Pusher from 'pusher';
 import winston from 'winston';
 import { initDB, Message } from './db.js';
 import { combineToGrid, getAIResponse } from './gemini.js';
-import providersRouter, { getActiveProviderKey } from './routes/providers.js';
-import { Provider } from './models/Provider.js';
+import providersRouter from './routes/providers.js';
 import { DreamBeesClient } from './infrastructure/discord/DreamBeesClient.js';
-import { DiscordOrchestrator } from './core/DiscordOrchestrator.js';
+import { handleDiscordMessage } from './core/DiscordOrchestrator.js';
 import { DreamBeesTelegramClient } from './infrastructure/telegram/DreamBeesTelegramClient.js';
-import { TelegramOrchestrator } from './core/TelegramOrchestrator.js';
+import { handleTelegramMessage } from './core/TelegramOrchestrator.js';
 
 dotenv.config();
 
@@ -52,7 +51,7 @@ const pusher = new Pusher({
   secret: process.env.SOKETI_APP_SECRET || 'app-secret',
   useTLS: false,
   host: '127.0.0.1',
-  port: 6001,
+  port: '6001',
   cluster: 'mt1',
 });
 
@@ -204,10 +203,10 @@ app.listen(PORT, async () => {
   logger.info(`Server listening on http://localhost:${PORT}`);
 
   // --- Initialize DreamBees Discord Bot ---
-  const discordBot = new DreamBeesClient(DiscordOrchestrator.handleMessage);
+  const discordBot = new DreamBeesClient(handleDiscordMessage);
   await discordBot.start();
 
   // --- Initialize DreamBees Telegram Bot ---
-  const telegramBot = new DreamBeesTelegramClient(TelegramOrchestrator.handleMessage);
+  const telegramBot = new DreamBeesTelegramClient(handleTelegramMessage);
   await telegramBot.start();
 });

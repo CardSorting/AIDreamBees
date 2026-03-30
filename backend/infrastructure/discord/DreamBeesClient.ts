@@ -1,11 +1,13 @@
 import {
+  ChannelType,
   Client,
   Events,
   GatewayIntentBits,
+} from 'discord.js';
+import type {
   Message,
   TextChannel,
   ThreadChannel,
-  ChannelType,
 } from 'discord.js';
 import dotenv from 'dotenv';
 import winston from 'winston';

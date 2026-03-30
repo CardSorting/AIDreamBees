@@ -1,13 +1,15 @@
-import { GoogleGenerativeAI } from '@google/generative-ai';
+import { GoogleGenAI } from '@google/genai';
 import dotenv from 'dotenv';
 import sharp from 'sharp';
 import { getActiveProviderKey } from './routes/providers.js';
 
 dotenv.config();
 
-const getGenAI = async () => {
+const getGenAIClient = async () => {
   const userKey = await getActiveProviderKey('gemini');
-  return new GoogleGenerativeAI(userKey || process.env.GEMINI_API_KEY || '');
+  return new GoogleGenAI({
+    apiKey: userKey || process.env.GEMINI_API_KEY || '',
+  });
 };
 
 interface Message {
@@ -22,37 +24,97 @@ interface AIResponsePart {
   content: string;
 }
 
+/**
+ * Higher-level function to handle AI responses, including text and image generation.
+ */
 const getAIResponse = async (
-  history: Message[],
+  _history: Message[],
   message: string,
-  substrateContext: unknown,
-  _useGrid: boolean,
+  _substrateContext: unknown,
+  useGrid: boolean,
 ): Promise<AIResponsePart[]> => {
-  const genAI = await getGenAI();
-  const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
-
-  // Simplified prompt for demonstration
-  const prompt = `
-    Context from BroccoliDB Substrate: ${JSON.stringify(substrateContext)}
-    User: ${message}
-    History: ${JSON.stringify(history)}
-    
-    Response format: JSON array of parts { "type": "text" | "image", "content": "string" }.
-    For images, use base64 strings.
-  `;
+  const ai = await getGenAIClient();
+  const model = 'gemini-3.1-flash-image-preview';
 
   try {
-    const result = await model.generateContent(prompt);
-    const text = result.response.text();
-    // In a real app, you'd parse this text for JSON parts.
-    // For now, let's assume it returns text and potentially mock images if requested.
-    return [{ type: 'text', content: text }];
+    if (useGrid) {
+      // Parallel generation of 4 unique images for a 2x2 grid
+      const gridVariations = [
+        'variation A: high detail, close-up perspective',
+        'variation B: cinematic lighting, wide-angle',
+        'variation C: artistic style shift, vibrant colors',
+        'variation D: minimal composition, soft focus',
+      ];
+
+      const imagePromises = gridVariations.map(async (variation) => {
+        const prompt = `${message} (${variation})`;
+        const response = await ai.models.generateContent({
+          model,
+          contents: prompt,
+          config: {
+            responseModalities: ['TEXT', 'IMAGE'],
+          },
+        });
+
+        // Extract image part from response
+        const candidate = response.candidates?.[0];
+        const parts = candidate?.content?.parts;
+        if (!parts) return null;
+
+        for (const part of parts) {
+          if (part.inlineData?.data) {
+            return {
+              type: 'image' as const,
+              content: part.inlineData.data, // base64
+            };
+          }
+        }
+        return null;
+      });
+
+      const results = await Promise.all(imagePromises);
+      // Fixed type guard to correctly identify non-null image parts
+      const imageParts = results.filter((r): r is { type: 'image'; content: string } => r !== null);
+      
+      return [
+        { type: 'text', content: `Generated a 2x2 grid for: "${message}"` },
+        ...imageParts
+      ];
+    } else {
+      // Single image generation
+      const response = await ai.models.generateContent({
+        model,
+        contents: message,
+        config: {
+          responseModalities: ['TEXT', 'IMAGE'],
+        },
+      });
+
+      const parts: AIResponsePart[] = [];
+      const candidate = response.candidates?.[0];
+      const resParts = candidate?.content?.parts;
+
+      if (resParts) {
+        for (const part of resParts) {
+          if (part.text) {
+            parts.push({ type: 'text', content: part.text });
+          } else if (part.inlineData?.data) {
+            parts.push({ type: 'image', content: part.inlineData.data });
+          }
+        }
+      }
+
+      return parts;
+    }
   } catch (error) {
-    console.error('Gemini API Error:', error);
+    console.error('Gemini Native Generation Error:', error);
     throw error;
   }
 };
 
+/**
+ * Combines up to 4 images into a 2x2 grid using sharp.
+ */
 const combineToGrid = async (images: string[]): Promise<string | null> => {
   if (images.length < 2) return images[0] || null;
 
@@ -61,7 +123,7 @@ const combineToGrid = async (images: string[]): Promise<string | null> => {
       images.slice(0, 4).map((img) => Buffer.from(img.split(',')[1] || img, 'base64')),
     );
 
-    // Basic 2x2 grid logic using sharp
+    // Basic 2x2 grid logic (assumes square inputs)
     const { data } = await sharp({
       create: {
         width: 1024,

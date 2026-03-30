@@ -29,7 +29,9 @@ export class DreamBeesTelegramClient {
 
     this.bot.on('message', async (msg) => {
       if (!msg.text || msg.from?.is_bot) return;
-      await this.onMessageCallback(this.bot!, msg);
+      if (this.bot) {
+        await this.onMessageCallback(this.bot, msg);
+      }
     });
 
     logger.info('DreamBees Telegram bot started (polling)');
