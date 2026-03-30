@@ -66,7 +66,7 @@ export class BufferedDbPool {
     if (!this.db) {
       this.db = await getDb();
     }
-    return this.db;
+    return this.db!;
   }
 
   private startFlushLoop() {
