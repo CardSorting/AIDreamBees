@@ -10,6 +10,10 @@ import { initDB, Message } from './db.js';
 import { combineToGrid, getAIResponse } from './gemini.js';
 import providersRouter, { getActiveProviderKey } from './routes/providers.js';
 import { Provider } from './models/Provider.js';
+import { DreamBeesClient } from './infrastructure/discord/DreamBeesClient.js';
+import { DiscordOrchestrator } from './core/DiscordOrchestrator.js';
+import { DreamBeesTelegramClient } from './infrastructure/telegram/DreamBeesTelegramClient.js';
+import { TelegramOrchestrator } from './core/TelegramOrchestrator.js';
 
 dotenv.config();
 
@@ -191,7 +195,15 @@ app.post('/api/chat', async (req: Request, res: Response) => {
   }
 });
 
-app.listen(PORT, () => {
+app.listen(PORT, async () => {
   logger.info(`--- 🥦 Nano Banana 2 PRODUCTION-HARDENED Server with BroccoliDB ---`);
   logger.info(`Server listening on http://localhost:${PORT}`);
+
+  // --- Initialize DreamBees Discord Bot ---
+  const discordBot = new DreamBeesClient(DiscordOrchestrator.handleMessage);
+  await discordBot.start();
+
+  // --- Initialize DreamBees Telegram Bot ---
+  const telegramBot = new DreamBeesTelegramClient(TelegramOrchestrator.handleMessage);
+  await telegramBot.start();
 });

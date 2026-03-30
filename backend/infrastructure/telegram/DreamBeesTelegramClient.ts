@@ -1,0 +1,41 @@
+import TelegramBot from 'node-telegram-bot-api';
+import dotenv from 'dotenv';
+import winston from 'winston';
+
+dotenv.config();
+
+const logger = winston.createLogger({
+  level: 'info',
+  format: winston.format.combine(winston.format.timestamp(), winston.format.json()),
+  transports: [new winston.transports.Console()],
+});
+
+export class DreamBeesTelegramClient {
+  private bot: TelegramBot | null = null;
+  private onMessageCallback: (bot: TelegramBot, msg: TelegramBot.Message) => Promise<void>;
+
+  constructor(onMessageCallback: (bot: TelegramBot, msg: TelegramBot.Message) => Promise<void>) {
+    this.onMessageCallback = onMessageCallback;
+  }
+
+  public async start() {
+    const token = process.env.TELEGRAM_BOT_TOKEN;
+    if (!token) {
+      logger.warn('TELEGRAM_BOT_TOKEN not found. DreamBees Telegram bot will not start.');
+      return;
+    }
+
+    this.bot = new TelegramBot(token, { polling: true });
+
+    this.bot.on('message', async (msg) => {
+      if (!msg.text || msg.from?.is_bot) return;
+      await this.onMessageCallback(this.bot!, msg);
+    });
+
+    logger.info('DreamBees Telegram bot started (polling)');
+  }
+
+  public getBot() {
+    return this.bot;
+  }
+}
