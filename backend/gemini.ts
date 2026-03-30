@@ -1,10 +1,14 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
 import dotenv from 'dotenv';
 import sharp from 'sharp';
+import { getActiveProviderKey } from './routes/providers.js';
 
 dotenv.config();
 
-const genAI = new GoogleGenerativeAI(process.env.GEMINI_API_KEY || '');
+const getGenAI = async () => {
+  const userKey = await getActiveProviderKey('gemini');
+  return new GoogleGenerativeAI(userKey || process.env.GEMINI_API_KEY || '');
+};
 
 interface Message {
   user: string;
@@ -24,6 +28,7 @@ const getAIResponse = async (
   substrateContext: unknown,
   _useGrid: boolean,
 ): Promise<AIResponsePart[]> => {
+  const genAI = await getGenAI();
   const model = genAI.getGenerativeModel({ model: 'gemini-1.5-pro' });
 
   // Simplified prompt for demonstration

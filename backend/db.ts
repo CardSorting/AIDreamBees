@@ -1,4 +1,5 @@
 import { DataTypes, Model, type Optional, Sequelize } from 'sequelize';
+import { Provider } from './models/Provider.js';
 
 const sequelize = new Sequelize({
   dialect: 'sqlite',
@@ -74,6 +75,8 @@ const initDB = async () => {
   try {
     await sequelize.authenticate();
     await sequelize.sync();
+    // Also sync Provider model (from separate file)
+    await Provider.sync();
     console.log('--- 🥦 BroccoliDB Cognitive Substrate Online ---');
   } catch (error) {
     console.error('Substrate initialization failed:', error);

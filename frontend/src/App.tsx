@@ -12,6 +12,7 @@ import {
 import Pusher from 'pusher-js';
 import type React from 'react';
 import { useCallback, useEffect, useRef, useState } from 'react';
+import SettingsModal from './components/settings/SettingsModal';
 
 const API_BASE_URL = 'http://localhost:3001';
 const PUSHER_KEY = 'app-key';
@@ -60,6 +61,7 @@ const App = () => {
     nodeCount: 0,
   });
   const [gridMode, setGridMode] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const pusherRef = useRef<Pusher | null>(null);
@@ -311,12 +313,19 @@ const App = () => {
         </div>
 
         <div style={{ marginTop: 'auto' }}>
-          <div className="nav-item">
+          <button
+            type="button"
+            className="nav-item button-like"
+            onClick={() => setIsSettingsOpen(true)}
+            style={{ width: '100%', textAlign: 'left' }}
+          >
             <Settings size={18} />
             <span>Settings</span>
-          </div>
+          </button>
         </div>
       </aside>
+
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
 
       <main className="main-chat">
         <header className="chat-header">

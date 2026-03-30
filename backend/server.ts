@@ -8,6 +8,8 @@ import Pusher from 'pusher';
 import winston from 'winston';
 import { initDB, Message } from './db.js';
 import { combineToGrid, getAIResponse } from './gemini.js';
+import providersRouter, { getActiveProviderKey } from './routes/providers.js';
+import { Provider } from './models/Provider.js';
 
 dotenv.config();
 
@@ -108,6 +110,9 @@ app.delete('/api/history', async (_req: Request, res: Response) => {
     res.status(500).json({ error: 'Failed to clear history' });
   }
 });
+
+// --- Provider Management API ---
+app.use('/api/providers', providersRouter);
 
 // --- Real-time Chat API Endpoint (Full Cognitive Substrate) ---
 app.post('/api/chat', async (req: Request, res: Response) => {
