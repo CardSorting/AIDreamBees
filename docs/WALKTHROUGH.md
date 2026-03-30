@@ -1,6 +1,14 @@
-# 📖 Welcome to DreamBeesAI: Your Creative Journey
-
 Hello! Welcome to the **DreamBeesAI** hive. This guide is designed to help you get started with your new AI creative companion, even if you're not a technical expert.
+
+---
+
+## 🍵 A Day in the Life of a Dreamer
+
+Imagine you're an artist starting your day. Here's how DreamBeesAI fits into your creative world:
+
+-   **Morning Focus**: You're at your desk with coffee. You open the Web Dashboard and ask, *"What's the entropy like today?"* The AI responds with a creative spark, generating a 2x2 grid of abstract patterns to inspire your morning sketch.
+-   **Afternoon Spark**: You're out for a walk and have a sudden idea. You pull out your phone, message your bot on Telegram: *"Dream of a meadow made of digital flowers."* The AI "remembers" your style from this morning and generates a resonant image.
+-   **Evening Review**: Back at home, you open your laptop. All your Telegram dreams from the afternoon are perfectly synced to your dashboard, ready for you to upscale and turn into a final masterpiece.
 
 ---
 
@@ -46,6 +54,24 @@ At the top of your dashboard, you'll see some "Hive Metrics":
 -   **Stability**: If this is high (e.g., 0.99), the AI's memory is healthy and consistent.
 -   **Entropy**: This represents the "randomness" or "creative chaos" in the system. A little entropy is good for creativity!
 -   **Node Count**: This is simply how many "thoughts" or messages the AI is currently remembering.
+
+---
+
+## 💡 Phase 5: Creative Prompting Guide
+
+Want even better results? Try these tips:
+1.  **Be Specific**: Avoid "a cat." Try "a ginger cat sitting on a velvet throne in space."
+2.  **Add Style**: Mention an artist or a style (e.g., "Digital art", "Oil painting", "Pencil sketch").
+3.  **Lighting Matters**: Try "Cinematic lighting", "Cyberpunk neon", or "Golden hour."
+4.  **Try High-Res**: Add "4K", "8K", or "Highly detailed" to your prompt.
+
+---
+
+## ⚡ Quick Tips
+
+-   **Check the Health**: If Stability is low, give the AI a simpler prompt to help it "re-orient" its memory.
+-   **Clear History**: If you want a fresh start, you can purge the cognitive substrate via the API or your admin dashboard.
+-   **Experiment with Grid Mode**: Turn it on when you're looking for global inspiration, and off when you want one perfect shot.
 
 ---
 

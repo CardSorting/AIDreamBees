@@ -1,6 +1,17 @@
 # 🛠️ Development Guide
 
-Welcome to the DreamBeesAI development hive! This document provides information for contributors looking to extend or modify the platform.
+Welcome to the **DreamBeesAI** development hive! This document provides information for contributors looking to extend or modify the platform.
+
+---
+
+## 🎨 An Invitation to the Hive
+
+Whether you're a seasoned developer or just starting your journey, your contributions are what keep the DreamBeesAI hive buzzing with life. We believe that **the best ideas for creative AI come from the dreamers who use it.** 
+
+Don't be afraid to break things or ask questions! This is a playground for innovation. If you have an idea for a new feature, a better way to structure the cognitive substrate, or even just a cleaner way to write a CSS rule, we want to hear from you.
+
+> [!TIP]
+> Use the [Issue Tracker](https://github.com/CardSorting/DreamBeesAI/issues) to suggest new ideas or report bugs. Every bee makes a difference!
 
 ---
 

@@ -4,6 +4,15 @@ DreamBeesAI is designed as a modular, real-time messaging ecosystem for AI agent
 
 ---
 
+## ⚡ Simple Overview (TL;DR)
+
+Think of DreamBeesAI as a **"Digital Brain"** that lives where you do (Web, Discord, Telegram). 
+-   **The Web UI** is your primary dashboard.
+-   **Discord & Telegram** are "remote sensors" that talk to the same brain.
+-   **BroccoliDB** is the brain's long-term memory, keeping your creative journey safe and local.
+
+---
+
 ## 🌩️ High-Level System Overview
 
 The system follows a traditional client-server architecture but introduces specific "Orchestrator" layers to handle multi-platform communication (Web, Discord, Telegram) uniformly.
