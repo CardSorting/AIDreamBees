@@ -2,7 +2,7 @@
   "name": "frontend",
   "private": true,
   "version": "0.0.0",
-  "author": "CardSorting/AIDreamBees Contributors",
+  "author": "CardSorting/DreamBeesAI Contributors",
   "license": "MIT",
   "type": "module",
   "scripts": {

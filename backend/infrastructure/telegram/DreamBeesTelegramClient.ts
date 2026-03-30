@@ -10,7 +10,7 @@ const logger = winston.createLogger({
   transports: [new winston.transports.Console()],
 });
 
-export class DreamBeesTelegramClient {
+export class DreamBeesAITelegramClient {
   private bot: TelegramBot | null = null;
   private onMessageCallback: (bot: TelegramBot, msg: TelegramBot.Message) => Promise<void>;
 
@@ -21,7 +21,7 @@ export class DreamBeesTelegramClient {
   public async start() {
     const token = process.env.TELEGRAM_BOT_TOKEN;
     if (!token) {
-      logger.warn('TELEGRAM_BOT_TOKEN not found. DreamBees Telegram bot will not start.');
+      logger.warn('TELEGRAM_BOT_TOKEN not found. DreamBeesAI Telegram bot will not start.');
       return;
     }
 
@@ -34,7 +34,7 @@ export class DreamBeesTelegramClient {
       }
     });
 
-    logger.info('DreamBees Telegram bot started (polling)');
+    logger.info('DreamBeesAI Telegram bot started (polling)');
   }
 
   public getBot() {

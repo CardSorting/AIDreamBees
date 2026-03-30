@@ -1,4 +1,4 @@
-const DB_NAME = 'AIDreamBees_Substrate';
+const DB_NAME = 'DreamBeesAI_Substrate';
 const STORE_NAME = 'messages';
 const DB_VERSION = 1;
 

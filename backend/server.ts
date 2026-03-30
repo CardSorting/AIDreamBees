@@ -11,8 +11,8 @@ import { handleDiscordMessage } from './core/DiscordOrchestrator.js';
 import { handleTelegramMessage } from './core/TelegramOrchestrator.js';
 import { initDB, Message, sequelize } from './db.js';
 import { combineToGrid, getAIResponse } from './gemini.js';
-import { DreamBeesClient } from './infrastructure/discord/DreamBeesClient.js';
-import { DreamBeesTelegramClient } from './infrastructure/telegram/DreamBeesTelegramClient.js';
+import { DreamBeesAIClient } from './infrastructure/discord/DreamBeesClient.js';
+import { DreamBeesAITelegramClient } from './infrastructure/telegram/DreamBeesTelegramClient.js';
 import providersRouter from './routes/providers.js';
 import { config as validatedConfig } from './config.schema.js';
 import { z } from 'zod';
@@ -123,7 +123,7 @@ app.post('/broadcasting/auth', authLimiter, (req: Request, res: Response) => {
 app.get('/', (_req: Request, res: Response) => {
   res.json({
     status: 'online',
-    service: 'Nano Banana 2 Backend',
+    service: 'DreamBeesAI Backend',
     substrate: 'BroccoliDB',
     version: '2.1.0',
   });
@@ -309,14 +309,14 @@ app.post('/api/chat', apiLimiter, async (req: Request, res: Response) => {
 });
 
 app.listen(PORT, async () => {
-  logger.info(`--- 🥦 Nano Banana 2 PRODUCTION-HARDENED Server with BroccoliDB ---`);
+  logger.info(`--- 🥦 DreamBeesAI PRODUCTION-HARDENED Server with BroccoliDB ---`);
   logger.info(`Server listening on http://localhost:${PORT}`);
 
-  // --- Initialize DreamBees Discord Bot ---
-  const discordBot = new DreamBeesClient(handleDiscordMessage);
+  // --- Initialize DreamBeesAI Discord Bot ---
+  const discordBot = new DreamBeesAIClient(handleDiscordMessage);
   await discordBot.start();
 
-  // --- Initialize DreamBees Telegram Bot ---
-  const telegramBot = new DreamBeesTelegramClient(handleTelegramMessage);
+  // --- Initialize DreamBeesAI Telegram Bot ---
+  const telegramBot = new DreamBeesAITelegramClient(handleTelegramMessage);
   await telegramBot.start();
 });

@@ -20,7 +20,7 @@ const logger = winston.createLogger({
   transports: [new winston.transports.Console()],
 });
 
-export class DreamBeesClient {
+export class DreamBeesAIClient {
   private client: Client;
   private onMessageCallback: (message: Message, thread: ThreadChannel) => Promise<void>;
 
@@ -39,7 +39,7 @@ export class DreamBeesClient {
 
   private setupListeners() {
     this.client.once(Events.ClientReady, (readyClient) => {
-      logger.info(`Ready! Logged in as ${readyClient.user.tag} (DreamBees)`);
+      logger.info(`Ready! Logged in as ${readyClient.user.tag} (DreamBeesAI)`);
     });
 
     this.client.on(Events.MessageCreate, async (message) => {
@@ -68,7 +68,7 @@ export class DreamBeesClient {
         reason: 'New private art studio for user',
       });
 
-      await thread.send(`Welcome to your private art studio, ${message.author.username}! I am DreamBees, your AI creative partner.`);
+      await thread.send(`Welcome to your private art studio, ${message.author.username}! I am DreamBeesAI, your AI creative partner.`);
       
       // Pass the original message to the callback within the context of the new thread
       await this.onMessageCallback(message, thread);
