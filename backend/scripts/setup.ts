@@ -35,15 +35,34 @@ async function setup() {
       continue;
     }
 
-    // Interactive skipping
+    // Interactive skipping with help
     if (key === 'DISCORD_TOKEN') {
-      const skip = await rl.question('Do you want to set up Discord? (y/n, default: y): ');
-      if (skip.toLowerCase() === 'n') skipDiscord = true;
+      const skip = await rl.question('Do you want to set up Discord? (y/n, or type "help"): ');
+      if (skip.toLowerCase() === 'help') {
+        console.log('\n🎮 DISCORD SETUP WALKTHROUGH:');
+        console.log('1. Go to the Discord Developer Portal: https://discord.com/developers/applications');
+        console.log('2. Create a "New Application".');
+        console.log('3. Go to "Bot" settings, reset/copy your "Token".');
+        console.log('4. Ensure "Message Content Intent" is enabled under "Privileged Gateway Intents".\n');
+        const skipAfterHelp = await rl.question('Ready to set up Discord? (y/n): ');
+        if (skipAfterHelp.toLowerCase() === 'n') skipDiscord = true;
+      } else if (skip.toLowerCase() === 'n') {
+        skipDiscord = true;
+      }
     }
 
     if (key === 'TELEGRAM_BOT_TOKEN') {
-      const skip = await rl.question('Do you want to set up Telegram? (y/n, default: y): ');
-      if (skip.toLowerCase() === 'n') skipTelegram = true;
+      const skip = await rl.question('Do you want to set up Telegram? (y/n, or type "help"): ');
+      if (skip.toLowerCase() === 'help') {
+        console.log('\n📱 TELEGRAM SETUP WALKTHROUGH:');
+        console.log('1. Open Telegram and search for "@BotFather".');
+        console.log('2. Send "/newbot" and follow the prompts to name your bot.');
+        console.log('3. Copy the "HTTP API token" provided at the end.\n');
+        const skipAfterHelp = await rl.question('Ready to set up Telegram? (y/n): ');
+        if (skipAfterHelp.toLowerCase() === 'n') skipTelegram = true;
+      } else if (skip.toLowerCase() === 'n') {
+        skipTelegram = true;
+      }
     }
 
     // Skip related fields
@@ -57,7 +76,35 @@ async function setup() {
       continue;
     }
 
-    const answer = await rl.question(`Enter value for ${key}${defaultValue ? ` (default: ${defaultValue})` : ''}: `);
+    let answer = '';
+    if (key === 'GEMINI_API_KEY') {
+      const help = await rl.question(`Enter value for ${key} (or type "help"): `);
+      if (help.toLowerCase() === 'help') {
+        console.log('\n📖 GEMINI API KEY WALKTHROUGH:');
+        console.log('1. Go to https://aistudio.google.com/');
+        console.log('2. Click on "Get API key" in the sidebar.');
+        console.log('3. Create a new API key in a new or existing project.');
+        console.log('4. Copy and paste the key here.\n');
+        answer = await rl.question(`Enter value for ${key}: `);
+      } else {
+        answer = help;
+      }
+    } else if (key === 'SOKETI_APP_ID' || key === 'SOKETI_APP_KEY' || key === 'SOKETI_APP_SECRET') {
+      const help = await rl.question(`Enter value for ${key} (default: ${defaultValue}, or type "help"): `);
+      if (help.toLowerCase() === 'help') {
+        console.log('\n📡 SOKETI CONFIGURATION GUIDE:');
+        console.log('Soketi is a self-hosted WebSocket server. You can use any values for local development.');
+        console.log('Defaults are recommended for local setup:');
+        console.log('- ID: app-id');
+        console.log('- Key: app-key');
+        console.log('- Secret: app-secret\n');
+        answer = await rl.question(`Enter value for ${key} (default: ${defaultValue}): `);
+      } else {
+        answer = help;
+      }
+    } else {
+      answer = await rl.question(`Enter value for ${key}${defaultValue ? ` (default: ${defaultValue})` : ''}: `);
+    }
     newEnv.push(`${key}=${answer || defaultValue || ''}`);
   }
 
