@@ -1,5 +1,5 @@
 import { Message as DiscordMessage, ThreadChannel } from 'discord.js';
-import { getAIResponse } from '../gemini.js';
+import { combineToGrid, getAIResponse } from '../gemini.js';
 import { Message as DBMessage } from '../db.js';
 import winston from 'winston';
 
@@ -32,23 +32,37 @@ export class DiscordOrchestrator {
       // Substrate Context could be injected here if we have search capability
       const substrateContext = `User: ${message.author.username}, Channel: ${thread.name}`;
       
-      const responseParts = await getAIResponse([], userMessageContent, substrateContext, false);
+      // TODO: Determine useGrid from thread/user settings if applicable
+      const useGrid = false; 
+      const responseParts = await getAIResponse([], userMessageContent, substrateContext, useGrid);
 
-      // 5. Send back to Discord thread
+      // 5. Process and send back to Discord thread
+      let botImages = responseParts.filter(p => p.type === 'image').map(p => p.content);
+      let sourceImages: string[] = [];
+
+      if (useGrid && botImages.length > 1) {
+        sourceImages = [...botImages];
+        const gridResult = await combineToGrid(botImages);
+        if (gridResult) {
+          botImages = [gridResult];
+        }
+      }
+
       for (const part of responseParts) {
         if (part.type === 'text') {
           // Send in chunks if needed (Discord limit is 2000 chars)
           await thread.send(part.content.substring(0, 2000));
-        } else if (part.type === 'image') {
-          // Part content is base64
-          const buffer = Buffer.from(part.content.split(',')[1] || part.content, 'base64');
-          await thread.send({
-            files: [{
-              attachment: buffer,
-              name: 'dream.png'
-            }]
-          });
         }
+      }
+
+      for (const img of botImages) {
+        const buffer = Buffer.from(img.split(',')[1] || img, 'base64');
+        await thread.send({
+          files: [{
+            attachment: buffer,
+            name: 'dream.png'
+          }]
+        });
       }
 
       // 6. Save AI Message to DB
@@ -57,7 +71,8 @@ export class DiscordOrchestrator {
         user: 'DreamBees',
         message: botText,
         type: 'bot',
-        images: responseParts.filter(p => p.type === 'image').map(p => p.content),
+        images: botImages,
+        sourceImages: sourceImages,
       });
 
     } catch (error) {

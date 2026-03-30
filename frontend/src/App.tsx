@@ -27,6 +27,7 @@ interface Message {
   type: 'bot' | 'user';
   timestamp: string;
   images: string[];
+  sourceImages?: string[];
   soundness?: number;
   isGrounded?: boolean;
   suggestions?: Suggestion[];
@@ -141,6 +142,7 @@ const App = () => {
       user: string;
       message: string;
       images?: string[];
+      sourceImages?: string[];
       soundness?: number;
       isGrounded?: boolean;
     }) => {
@@ -154,6 +156,7 @@ const App = () => {
           type: 'bot',
           timestamp: new Date().toISOString(),
           images: data.images || [],
+          sourceImages: data.sourceImages || [],
           soundness: data.soundness || 1.0,
           isGrounded: data.isGrounded || false,
         },
@@ -373,23 +376,43 @@ const App = () => {
                 {msg.images && msg.images.length > 0 && (
                   <div className="message-image-container">
                     {msg.images.map((img) => (
-                      <button
-                        key={`${msg.id}-img-${img.substring(0, 32)}`}
-                        type="button"
-                        className="image-button"
-                        onClick={() =>
-                          window.open(
-                            img.startsWith('data:') ? img : `data:image/png;base64,${img}`,
-                            '_blank',
-                          )
-                        }
-                      >
-                        <img
-                          src={img.startsWith('data:') ? img : `data:image/png;base64,${img}`}
-                          className="message-image"
-                          alt="Cognitive Generation"
-                        />
-                      </button>
+                      <div key={`${msg.id}-img-wrapper-${img.substring(0, 32)}`} className="image-wrapper">
+                        <button
+                          key={`${msg.id}-img-${img.substring(0, 32)}`}
+                          type="button"
+                          className="image-button"
+                          onClick={() =>
+                            window.open(
+                              img.startsWith('data:') ? img : `data:image/png;base64,${img}`,
+                              '_blank',
+                            )
+                          }
+                        >
+                          <img
+                            src={img.startsWith('data:') ? img : `data:image/png;base64,${img}`}
+                            className="message-image"
+                            alt="Cognitive Generation"
+                          />
+                        </button>
+                        {msg.sourceImages && msg.sourceImages.length > 0 && (
+                          <div className="upscale-controls">
+                            {msg.sourceImages.map((srcImg, idx) => (
+                              <button
+                                key={`${msg.id}-upscale-${idx}`}
+                                className="upscale-btn"
+                                onClick={() =>
+                                  window.open(
+                                    srcImg.startsWith('data:') ? srcImg : `data:image/png;base64,${srcImg}`,
+                                    '_blank',
+                                  )
+                                }
+                              >
+                                U{idx + 1}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     ))}
                   </div>
                 )}

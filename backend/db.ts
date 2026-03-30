@@ -14,6 +14,7 @@ interface MessageAttributes {
   type: string;
   timestamp: string;
   images: string[];
+  sourceImages?: string[];
   soundness?: number;
 }
 
@@ -57,6 +58,10 @@ Message.init(
       defaultValue: DataTypes.NOW,
     },
     images: {
+      type: DataTypes.JSON,
+      defaultValue: [],
+    },
+    sourceImages: {
       type: DataTypes.JSON,
       defaultValue: [],
     },

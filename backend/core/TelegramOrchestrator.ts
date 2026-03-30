@@ -1,5 +1,5 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { getAIResponse } from '../gemini.js';
+import { combineToGrid, getAIResponse } from '../gemini.js';
 import { Message as DBMessage } from '../db.js';
 import winston from 'winston';
 
@@ -29,16 +29,31 @@ export class TelegramOrchestrator {
 
       // 3. Get AI Response
       const substrateContext = `User: ${username}, Platform: Telegram`;
-      const responseParts = await getAIResponse([], text, substrateContext, false);
+      // TODO: Determine useGrid from user settings if applicable
+      const useGrid = false; 
+      const responseParts = await getAIResponse([], text, substrateContext, useGrid);
 
-      // 4. Send back to Telegram
+      // 4. Process and send back to Telegram
+      let botImages = responseParts.filter(p => p.type === 'image').map(p => p.content);
+      let sourceImages: string[] = [];
+
+      if (useGrid && botImages.length > 1) {
+        sourceImages = [...botImages];
+        const gridResult = await combineToGrid(botImages);
+        if (gridResult) {
+          botImages = [gridResult];
+        }
+      }
+
       for (const part of responseParts) {
         if (part.type === 'text') {
           await bot.sendMessage(chatId, part.content);
-        } else if (part.type === 'image') {
-          const buffer = Buffer.from(part.content.split(',')[1] || part.content, 'base64');
-          await bot.sendPhoto(chatId, buffer, { caption: 'DreamBees Art' });
         }
+      }
+
+      for (const img of botImages) {
+        const buffer = Buffer.from(img.split(',')[1] || img, 'base64');
+        await bot.sendPhoto(chatId, buffer, { caption: 'DreamBees Art' });
       }
 
       // 5. Save AI Message to DB
@@ -47,7 +62,8 @@ export class TelegramOrchestrator {
         user: 'DreamBees',
         message: botText,
         type: 'bot',
-        images: responseParts.filter(p => p.type === 'image').map(p => p.content),
+        images: botImages,
+        sourceImages: sourceImages,
       });
 
     } catch (error) {

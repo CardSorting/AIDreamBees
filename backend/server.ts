@@ -152,8 +152,10 @@ app.post('/api/chat', async (req: Request, res: Response) => {
     let botImages = resultParts.filter((p) => p.type === 'image').map((p) => p.content);
 
     // 5b. Grid Mode Logic
+    let sourceImages: string[] = [];
     if (useGrid && botImages.length > 1) {
       logger.info(`Combining ${botImages.length} images into a 2x2 grid.`);
+      sourceImages = [...botImages]; // Keep original images
       const gridResult = await combineToGrid(botImages);
       if (gridResult) {
         botImages = [gridResult];
@@ -166,12 +168,14 @@ app.post('/api/chat', async (req: Request, res: Response) => {
       message: botText,
       type: 'bot',
       images: botImages,
+      sourceImages: sourceImages,
     });
 
     // 7. Broadcast via WebSocket
     pusher.trigger('presence-chat', 'bot-message', {
       message: botText,
       images: botImages,
+      sourceImages: sourceImages,
       user: 'Nano Banana 2',
       soundness: savedBotMsg.soundness || 1.0,
       isGrounded: !!substrateContext,
