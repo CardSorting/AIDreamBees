@@ -326,7 +326,7 @@ const App = () => {
             style={{ width: '100%', textAlign: 'left' }}
           >
             <Settings size={18} />
-            <span>Settings</span>
+            <span>Hive Configuration</span>
           </button>
         </div>
       </aside>

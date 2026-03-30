@@ -98,6 +98,19 @@ body {
 .nav-item.active {
   background-color: var(--secondary-bg);
   color: var(--accent-color);
+  position: relative;
+}
+
+.nav-item.active::before {
+  content: "";
+  position: absolute;
+  left: -1.25rem;
+  top: 15%;
+  bottom: 15%;
+  width: 4px;
+  background: var(--honey-gradient);
+  border-radius: 0 4px 4px 0;
+  box-shadow: 0 0 10px rgba(245, 158, 11, 0.4);
 }
 
 .sidebar-section {
@@ -213,6 +226,18 @@ body {
   max-width: 850px;
   width: 100%;
   margin: 0 auto;
+  animation: slide-in 0.4s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes slide-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
 }
 
 .message {
@@ -647,15 +672,27 @@ textarea:focus {
 }
 
 .modal-content {
-  background-color: #0a0a0a;
-  border: 1px solid #222;
-  border-radius: 12px;
+  background-color: #0d0d0d;
+  border: 1px solid var(--border-color);
+  border-radius: 20px;
   width: 100%;
   max-width: 600px;
   max-height: 90vh;
   display: flex;
   flex-direction: column;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04);
+  box-shadow: 0 30px 60px rgba(0, 0, 0, 0.6);
+  position: relative;
+  overflow: hidden;
+}
+
+.modal-content::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 0;
+  right: 0;
+  height: 4px;
+  background: var(--honey-gradient);
 }
 
 .modal-header {
@@ -944,19 +981,20 @@ textarea:focus {
 }
 
 .save-btn {
-  background-color: #fbbf24;
+  background: var(--honey-gradient);
   color: #000;
   border: none;
-  padding: 8px 16px;
-  border-radius: 6px;
-  font-weight: 600;
+  padding: 10px 24px;
+  border-radius: 12px;
+  font-weight: 700;
   cursor: pointer;
-  transition: all 0.2s;
+  transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+  box-shadow: 0 4px 12px rgba(245, 158, 11, 0.3);
 }
 
 .save-btn:hover {
-  background-color: #f59e0b;
-  transform: translateY(-1px);
+  transform: scale(1.05) translateY(-2px);
+  box-shadow: 0 8px 20px rgba(245, 158, 11, 0.5);
 }
 
 .modal-footer {
