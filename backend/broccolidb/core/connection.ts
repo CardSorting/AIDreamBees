@@ -1,5 +1,5 @@
-import { setDbPath } from '../infrastructure/db/Config.js';
 import { dbPool } from '../infrastructure/db/BufferedDbPool.js';
+import { setDbPath } from '../infrastructure/db/Config.js';
 import { AgentGitError } from './errors.js';
 
 export interface AgentGitConfig {

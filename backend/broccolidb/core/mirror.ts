@@ -1,5 +1,5 @@
-import { simpleGit, type SimpleGit } from 'simple-git';
-import { Repository } from './repository.js';
+import { type SimpleGit, simpleGit } from 'simple-git';
+import type { Repository } from './repository.js';
 
 /**
  * LocalMirror Prototype
@@ -13,7 +13,7 @@ export class LocalMirror {
   constructor(
     private readonly repo: Repository,
     private readonly branch: string,
-    private readonly localDirPath: string
+    private readonly localDirPath: string,
   ) {
     this.git = simpleGit(this.localDirPath);
   }
@@ -38,11 +38,11 @@ export class LocalMirror {
     await this.git.add(['.', '--ignore-errors']);
     const result = await this.git.commit(message, { '--allow-empty': null });
     const hash = (result.commit || '').replace(/^HEAD\s+/, '');
-    
+
     console.log(`[LocalMirror] Committed local snapshot ${hash}`);
 
     // Background sync to the cloud storage
-    this.syncToCloud(hash, message).catch(err => {
+    this.syncToCloud(hash, message).catch((err) => {
       console.error(`[LocalMirror] Failed cloud sync for ${hash}: ${err.message}`);
     });
 
@@ -53,22 +53,34 @@ export class LocalMirror {
     try {
       // Get the patch content using git show
       const patch = await this.git.show([hash, '--pretty=format:']);
-      
-      await this.repo.commit(this.branch, { shadowHash: hash }, 'mirror-agent', `[LocalMirror] ${message}`, {
-        type: 'snapshot',
-        metadata: { 
-          shadowCommitHash: hash,
-          patch: patch.trim() 
-        }
-      });
+
+      await this.repo.commit(
+        this.branch,
+        { shadowHash: hash },
+        'mirror-agent',
+        `[LocalMirror] ${message}`,
+        {
+          type: 'snapshot',
+          metadata: {
+            shadowCommitHash: hash,
+            patch: patch.trim(),
+          },
+        },
+      );
       console.log(`[LocalMirror] Successfully synced event ${hash} to cloud.`);
     } catch (err: any) {
       console.error(`[LocalMirror] Failed to generate patch for ${hash}: ${err.message}`);
       // Fallback to basic sync if patch fails
-      await this.repo.commit(this.branch, { shadowHash: hash }, 'mirror-agent', `[LocalMirror] ${message}`, {
-        type: 'snapshot',
-        metadata: { shadowCommitHash: hash }
-      });
+      await this.repo.commit(
+        this.branch,
+        { shadowHash: hash },
+        'mirror-agent',
+        `[LocalMirror] ${message}`,
+        {
+          type: 'snapshot',
+          metadata: { shadowCommitHash: hash },
+        },
+      );
     }
   }
 

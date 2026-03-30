@@ -1,0 +1,23 @@
+{
+  "name": "aidreambees",
+  "version": "1.0.0",
+  "description": "A high-performance, real-time chat interface for the **Nano Banana 2** model.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/CardSorting/AIDreamBees.git"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/CardSorting/AIDreamBees/issues"
+  },
+  "homepage": "https://github.com/CardSorting/AIDreamBees#readme",
+  "devDependencies": {
+    "@biomejs/biome": "2.4.9"
+  }
+}

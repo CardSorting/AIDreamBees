@@ -1,14 +1,14 @@
+import * as crypto from 'node:crypto';
+import { type BufferedDbPool, dbPool } from '../infrastructure/db/BufferedDbPool.js';
+import type { Schema } from '../infrastructure/db/Config.js';
 import { Connection } from './connection.js';
 import { AgentGitError, PathSanitizer } from './errors.js';
-import { FileTree } from './file-tree.js';
-import type { FileEntry } from './file-tree.js';
 import { executor } from './executor.js';
-import { EnvironmentTracker, telemetryQueue } from './tracker.js';
-import { TaskMutex } from './mutex.js';
+import type { FileEntry } from './file-tree.js';
+import { FileTree } from './file-tree.js';
 import { LRUCache } from './lru-cache.js';
-import { dbPool, BufferedDbPool } from '../infrastructure/db/BufferedDbPool.js';
-import * as crypto from 'node:crypto';
-import type { Schema } from '../infrastructure/db/Config.js';
+import { TaskMutex } from './mutex.js';
+import { EnvironmentTracker, telemetryQueue } from './tracker.js';
 
 // ─── Interfaces ───
 
@@ -37,14 +37,16 @@ export interface MemoryNode {
   tree?: Record<string, string> | undefined; // Full snapshot (legacy or resolved)
   changes?: Record<string, string> | undefined; // Only changes (for 'diff' type)
   usage?: Usage | undefined;
-  metadata?: {
-    treeHash?: string;
-    isHierarchical?: boolean;
-    taskId?: string;
-    decisionIds?: string[];
-    environment?: any;
-    [key: string]: any;
-  } | undefined;
+  metadata?:
+    | {
+        treeHash?: string;
+        isHierarchical?: boolean;
+        taskId?: string;
+        decisionIds?: string[];
+        environment?: any;
+        [key: string]: any;
+      }
+    | undefined;
 }
 
 export interface Branch {
@@ -145,7 +147,11 @@ export class Repository {
 
   private hooks: Record<string, ((data: any) => Promise<void>)[]> = {};
 
-  constructor(dbOrConnection: BufferedDbPool | Connection, basePathOrRepoId: string, agentContext?: any) {
+  constructor(
+    dbOrConnection: BufferedDbPool | Connection,
+    basePathOrRepoId: string,
+    agentContext?: any,
+  ) {
     this.agentContext = agentContext || null;
     this.nodeCache = new LRUCache<string, MemoryNode>(1000);
     this.refCache = new LRUCache<string, string>(100);
@@ -158,28 +164,51 @@ export class Repository {
     }
   }
 
-  files(): FileTree { return new FileTree(this.db as any, this); }
-  getBasePath(): string { return this.basePath; }
-  getDb(): BufferedDbPool { return this.db; }
-  getFileCache() { return this.fileCache; }
+  files(): FileTree {
+    return new FileTree(this.db as any, this);
+  }
+  getBasePath(): string {
+    return this.basePath;
+  }
+  getDb(): BufferedDbPool {
+    return this.db;
+  }
+  getFileCache() {
+    return this.fileCache;
+  }
 
   setTaskId(taskId: string): void {
     this.taskId = taskId;
   }
 
-  private async recordRefLog(ref: string, oldHead: string | null, newHead: string, author: string, operation: RefLogEntry['operation'], message: string): Promise<void> {
+  private async recordRefLog(
+    ref: string,
+    oldHead: string | null,
+    newHead: string,
+    author: string,
+    operation: RefLogEntry['operation'],
+    message: string,
+  ): Promise<void> {
     const id = crypto.randomUUID();
     const entry: RefLogEntry = {
-      id, ref, oldHead, newHead, author, message,
-      timestamp: Date.now(), operation
+      id,
+      ref,
+      oldHead,
+      newHead,
+      author,
+      message,
+      timestamp: Date.now(),
+      operation,
     };
     await this.db.push({
       type: 'insert',
       table: 'reflog',
       values: { ...entry, repoPath: this.basePath },
-      layer: 'infrastructure'
+      layer: 'infrastructure',
     });
-    console.log(`[AgentGit][RefLog] ${operation.toUpperCase()} on '${ref}': ${message} (${newHead.substring(0, 7)})`);
+    console.log(
+      `[AgentGit][RefLog] ${operation.toUpperCase()} on '${ref}': ${message} (${newHead.substring(0, 7)})`,
+    );
   }
 
   /**
@@ -191,10 +220,15 @@ export class Repository {
     if (!head) return 1000;
     if (head === commitId) return 0;
 
-    const rows = await this.db.selectWhere('reflog', [{ column: 'repoPath', value: this.basePath }], undefined, {
-      orderBy: { column: 'timestamp', direction: 'desc' },
-      limit: 1000,
-    });
+    const rows = await this.db.selectWhere(
+      'reflog',
+      [{ column: 'repoPath', value: this.basePath }],
+      undefined,
+      {
+        orderBy: { column: 'timestamp', direction: 'desc' },
+        limit: 1000,
+      },
+    );
 
     const index = rows.findIndex((r) => r.newHead === commitId);
     return index === -1 ? 1000 : index;
@@ -205,9 +239,14 @@ export class Repository {
    * Returns a baseline confidence score between 0.5 and 0.95.
    */
   async getNodePriors(path: string): Promise<number> {
-    const rows = await this.db.selectWhere('reflog', [{ column: 'repoPath', value: this.basePath }], undefined, {
-      limit: 5000,
-    });
+    const rows = await this.db.selectWhere(
+      'reflog',
+      [{ column: 'repoPath', value: this.basePath }],
+      undefined,
+      {
+        limit: 5000,
+      },
+    );
 
     const relevantCommits = rows.filter((r) => (r.message || '').includes(path));
     const commitCount = relevantCommits.length;
@@ -225,9 +264,14 @@ export class Repository {
    * [Pillar 1/2] Returns the raw churn frequency for a file path.
    */
   async getFileChurn(path: string): Promise<number> {
-    const rows = await this.db.selectWhere('reflog', [{ column: 'repoPath', value: this.basePath }], undefined, {
-      limit: 5000,
-    });
+    const rows = await this.db.selectWhere(
+      'reflog',
+      [{ column: 'repoPath', value: this.basePath }],
+      undefined,
+      {
+        limit: 5000,
+      },
+    );
     return rows.filter((r) => (r.message || '').includes(path)).length;
   }
 
@@ -238,25 +282,25 @@ export class Repository {
     if (cached) return cached;
 
     let targetId: string | null = null;
-    
+
     // Check Branches
     const branch = await this.db.selectOne('branches', [
       { column: 'repoPath', value: this.basePath },
-      { column: 'name', value: ref }
+      { column: 'name', value: ref },
     ]);
     if (branch) targetId = branch.head;
     else {
       // Check Tags
       const tag = await this.db.selectOne('tags', [
         { column: 'repoPath', value: this.basePath },
-        { column: 'name', value: ref }
+        { column: 'name', value: ref },
       ]);
       if (tag) targetId = tag.head;
       else {
         // Check Nodes
         const node = await this.db.selectOne('nodes', [
           { column: 'repoPath', value: this.basePath },
-          { column: 'id', value: ref }
+          { column: 'id', value: ref },
         ]);
         if (node) targetId = ref;
       }
@@ -279,7 +323,10 @@ export class Repository {
       { column: 'id', value: nodeId },
     ]);
     if (!node) {
-      throw new AgentGitError(`Node '${nodeId}' not found in repo '${this.basePath}'`, 'NODE_NOT_FOUND');
+      throw new AgentGitError(
+        `Node '${nodeId}' not found in repo '${this.basePath}'`,
+        'NODE_NOT_FOUND',
+      );
     }
     const data = {
       ...node,
@@ -292,50 +339,53 @@ export class Repository {
     return data;
   }
 
-
   /**
    * Bulk fetch nodes in a single round-trip.
    */
   async bulkGetNodes(nodeIds: string[]): Promise<MemoryNode[]> {
     if (nodeIds.length === 0) return [];
-    
+
     const results: MemoryNode[] = [];
     const missingIds: string[] = [];
-    
+
     for (const id of nodeIds) {
       const cached = this.nodeCache.get(id);
       if (cached) results.push(cached);
       else missingIds.push(id);
     }
-    
+
     if (missingIds.length > 0) {
       // Use efficient IN query now that BufferedDbPool supports it
       const rows = await this.db.selectWhere('nodes', [
         { column: 'id', value: missingIds, operator: 'IN' },
-        { column: 'repoPath', value: this.basePath }
+        { column: 'repoPath', value: this.basePath },
       ]);
 
       for (const row of rows) {
-          const node: MemoryNode = {
-            ...row as any,
-            data: JSON.parse(row.data),
-            tree: row.tree ? JSON.parse(row.tree) : undefined,
-            usage: row.usage ? JSON.parse(row.usage) : undefined,
-            metadata: row.metadata ? JSON.parse(row.metadata) : undefined
-          };
-          this.nodeCache.set(node.id, node);
-          results.push(node);
+        const node: MemoryNode = {
+          ...(row as any),
+          data: JSON.parse(row.data),
+          tree: row.tree ? JSON.parse(row.tree) : undefined,
+          usage: row.usage ? JSON.parse(row.usage) : undefined,
+          metadata: row.metadata ? JSON.parse(row.metadata) : undefined,
+        };
+        this.nodeCache.set(node.id, node);
+        results.push(node);
       }
     }
-    
+
     // Sort results by original requested order
-    const nodeMap = new Map(results.map(n => [n.id, n]));
-    return nodeIds.map(id => nodeMap.get(id)).filter(Boolean) as MemoryNode[];
+    const nodeMap = new Map(results.map((n) => [n.id, n]));
+    return nodeIds.map((id) => nodeMap.get(id)).filter(Boolean) as MemoryNode[];
   }
 
   // ─── Branch Operations ───
 
-  async createBranch(name: string, fromBranchOrNode?: string, options: { isEphemeral?: boolean; expiresAt?: number } = {}): Promise<void> {
+  async createBranch(
+    name: string,
+    fromBranchOrNode?: string,
+    options: { isEphemeral?: boolean; expiresAt?: number } = {},
+  ): Promise<void> {
     let headNodeId = '';
     if (fromBranchOrNode) {
       headNodeId = await this.resolveRef(fromBranchOrNode);
@@ -343,16 +393,19 @@ export class Repository {
     await this.db.push({
       type: 'upsert',
       table: 'branches',
-      where: [{ column: 'repoPath', value: this.basePath }, { column: 'name', value: name }],
+      where: [
+        { column: 'repoPath', value: this.basePath },
+        { column: 'name', value: name },
+      ],
       values: {
         repoPath: this.basePath,
         name,
         head: headNodeId,
         createdAt: Date.now(),
         isEphemeral: options.isEphemeral ? 1 : 0,
-        expiresAt: options.expiresAt || null
+        expiresAt: options.expiresAt || null,
       },
-      layer: 'domain'
+      layer: 'domain',
     });
     if (headNodeId) {
       this.refCache.set(name, headNodeId);
@@ -369,10 +422,10 @@ export class Repository {
 
   async listBranches(options: { limit?: number; startAfter?: string } = {}): Promise<string[]> {
     const rows = await this.db.selectWhere('branches', [
-      { column: 'repoPath', value: this.basePath }
+      { column: 'repoPath', value: this.basePath },
     ]);
     // Simplistic pagination/sorting logic since BufferedDbPool selectWhere is basic
-    let results = rows.map(r => r.name).sort();
+    let results = rows.map((r) => r.name).sort();
     if (options.startAfter) {
       const idx = results.indexOf(options.startAfter);
       if (idx >= 0) results = results.slice(idx + 1);
@@ -388,8 +441,11 @@ export class Repository {
     await this.db.push({
       type: 'delete',
       table: 'branches',
-      where: [{ column: 'repoPath', value: this.basePath }, { column: 'name', value: name }],
-      layer: 'domain'
+      where: [
+        { column: 'repoPath', value: this.basePath },
+        { column: 'name', value: name },
+      ],
+      layer: 'domain',
     });
     this.refCache.delete(name);
   }
@@ -397,32 +453,56 @@ export class Repository {
   // ─── Commit (Transactional) ───
 
   async commit(
-    branchName: string, data: any, author: string, message: string = '',
-    options: { type?: 'snapshot' | 'summary' | 'diff' | 'hypothesis' | 'conclusion'; usage?: Usage; metadata?: Record<string, any>; decisionIds?: string[] } = {}
+    branchName: string,
+    data: any,
+    author: string,
+    message: string = '',
+    options: {
+      type?: 'snapshot' | 'summary' | 'diff' | 'hypothesis' | 'conclusion';
+      usage?: Usage;
+      metadata?: Record<string, any>;
+      decisionIds?: string[];
+    } = {},
   ): Promise<string> {
     return executor.execute(`commit:${branchName}`, async () => {
       return TaskMutex.runExclusive(`branch:${this.basePath}:${branchName}`, async () => {
         const nodeId = this.generateNodeId();
-        
+
         // In the new SQLite architecture, we use BufferedDbPool's shadow system for "transactions"
         const agentId = author || 'default';
         await this.db.beginWork(agentId);
         try {
           // Pre-commit Reasoning Audit
-          if (this.strictReasoning && this.agentContext && (options.type === 'hypothesis' || options.type === 'conclusion')) {
+          if (
+            this.strictReasoning &&
+            this.agentContext &&
+            (options.type === 'hypothesis' || options.type === 'conclusion')
+          ) {
             const kbIds: string[] = [];
             if (data.knowledgeIds) kbIds.push(...data.knowledgeIds);
             if (data.factId) kbIds.push(data.factId);
-            
+
             if (kbIds.length > 0) {
-                const reports = await this.agentContext.detectContradictions(kbIds);
-                if (reports.length > 0) {
-                    throw new AgentGitError(`Reasoning commit blocked: High-confidence logical contradiction detected.`, 'REASONING_CONFLICT');
-                }
+              const reports = await this.agentContext.detectContradictions(kbIds);
+              if (reports.length > 0) {
+                throw new AgentGitError(
+                  `Reasoning commit blocked: High-confidence logical contradiction detected.`,
+                  'REASONING_CONFLICT',
+                );
+              }
             }
           }
 
-          await this.commitInTransaction(null as any, branchName, nodeId, data, author, message, options, agentId);
+          await this.commitInTransaction(
+            null as any,
+            branchName,
+            nodeId,
+            data,
+            author,
+            message,
+            options,
+            agentId,
+          );
           await this.db.commitWork(agentId);
         } catch (e) {
           await this.db.rollbackWork(agentId);
@@ -445,22 +525,22 @@ export class Repository {
     author: string,
     message: string,
     data: any,
-    options: { usage?: Usage } = {}
+    options: { usage?: Usage } = {},
   ) {
     // 1. Offload Telemetry to memory queue (batched flush later)
     if (options.usage) {
       telemetryQueue.enqueue(this.db, this.basePath, {
         agentId: author,
         usage: options.usage,
-        taskId: this.taskId || null
+        taskId: this.taskId || null,
       });
     }
 
     // 2. Background Reflog & Hooks
     Promise.allSettled([
       this.recordRefLog(branchName, null, nodeId, author, 'commit', message),
-      this.triggerHook('post-commit', { branchName, nodeId, author, message, data })
-    ]).catch(err => {
+      this.triggerHook('post-commit', { branchName, nodeId, author, message, data }),
+    ]).catch((err) => {
       console.error(`[AgentGit] Background post-commit processing failed for ${nodeId}:`, err);
     });
   }
@@ -476,29 +556,40 @@ export class Repository {
     data: any,
     author: string,
     message: string = '',
-    options: { type?: 'snapshot' | 'summary' | 'diff' | 'hypothesis' | 'conclusion'; usage?: Usage; metadata?: Record<string, any>; decisionIds?: string[] } = {},
-    agentId?: string
+    options: {
+      type?: 'snapshot' | 'summary' | 'diff' | 'hypothesis' | 'conclusion';
+      usage?: Usage;
+      metadata?: Record<string, any>;
+      decisionIds?: string[];
+    } = {},
+    agentId?: string,
   ): Promise<void> {
-    const branchDoc = await this.db.selectOne('branches', [
-      { column: 'repoPath', value: this.basePath },
-      { column: 'name', value: branchName }
-    ], agentId);
+    const branchDoc = await this.db.selectOne(
+      'branches',
+      [
+        { column: 'repoPath', value: this.basePath },
+        { column: 'name', value: branchName },
+      ],
+      agentId,
+    );
 
     if (!branchDoc) {
       throw new AgentGitError(`Branch ${branchName} not found.`, 'BRANCH_NOT_FOUND');
     }
     const parentId = branchDoc.head || null;
 
-    const usage = options.usage ? {
-      ...options.usage,
-      totalCost: options.usage.totalCost || EnvironmentTracker.estimateCost(options.usage)
-    } : undefined;
+    const usage = options.usage
+      ? {
+          ...options.usage,
+          totalCost: options.usage.totalCost || EnvironmentTracker.estimateCost(options.usage),
+        }
+      : undefined;
 
     const metadata: any = {
       ...options.metadata,
       decisionIds: options.decisionIds || [],
       environment: EnvironmentTracker.capture(),
-      ...(this.taskId ? { taskId: this.taskId } : {})
+      ...(this.taskId ? { taskId: this.taskId } : {}),
     };
 
     // --- Pass 5: Logical Sovereignty & Native Hardening ---
@@ -507,14 +598,21 @@ export class Repository {
       if (options.type === 'conclusion') {
         const treeHash = metadata.treeHash || 'empty';
         const knowledgeIds = data.knowledgeIds || [];
-        const pedigreeHash = crypto.createHash('sha256').update(JSON.stringify(knowledgeIds)).digest('hex');
-        metadata.proofHash = crypto.createHash('sha256').update(treeHash + pedigreeHash).digest('hex');
+        const pedigreeHash = crypto
+          .createHash('sha256')
+          .update(JSON.stringify(knowledgeIds))
+          .digest('hex');
+        metadata.proofHash = crypto
+          .createHash('sha256')
+          .update(treeHash + pedigreeHash)
+          .digest('hex');
       }
 
       // 2. Constitutional Audit (Path-bound rules)
       const constraints = await this.agentContext.getLogicalConstraints();
       if (constraints.length > 0) {
-        const changedPaths = options.type === 'diff' ? Object.keys(data.changes || {}) : Object.keys(data.tree || {});
+        const changedPaths =
+          options.type === 'diff' ? Object.keys(data.changes || {}) : Object.keys(data.tree || {});
         for (const path of changedPaths) {
           const matchingConstraints = constraints.filter((c: any) => {
             const pattern = c.pathPattern.replace(/\*/g, '.*');
@@ -525,9 +623,13 @@ export class Repository {
             const rule = await this.agentContext.getKnowledge(constraint.knowledgeId);
             const casHash = options.type === 'diff' ? data.changes[path] : data.tree[path];
             const fileItem = await this.db.selectOne('files', [{ column: 'id', value: casHash }]);
-            
+
             if (fileItem && rule) {
-              const audit = await this.agentContext.checkConstitutionalViolation(path, fileItem.content, rule.content);
+              const audit = await this.agentContext.checkConstitutionalViolation(
+                path,
+                fileItem.content,
+                rule.content,
+              );
               if (audit.violated) {
                 const msg = `Constitutional violation in ${path}: ${audit.reason}`;
                 if (constraint.severity === 'blocking') {
@@ -555,31 +657,40 @@ export class Repository {
       type: options.type || 'snapshot',
       usage: usage ? JSON.stringify(usage) : null,
       metadata: JSON.stringify(metadata),
-      tree: options.type === 'snapshot' ? JSON.stringify(data.tree || {}) : null // Logic for legacy flat trees
+      tree: options.type === 'snapshot' ? JSON.stringify(data.tree || {}) : null, // Logic for legacy flat trees
     };
 
-    await this.db.push({
-      type: 'insert',
-      table: 'nodes',
-      values: newNode,
-      layer: 'domain'
-    }, agentId);
+    await this.db.push(
+      {
+        type: 'insert',
+        table: 'nodes',
+        values: newNode,
+        layer: 'domain',
+      },
+      agentId,
+    );
 
-    await this.db.push({
-      type: 'update',
-      where: [{ column: 'repoPath', value: this.basePath }, { column: 'name', value: branchName }],
-      table: 'branches',
-      values: { head: nodeId },
-      layer: 'domain'
-    }, agentId);
-    
+    await this.db.push(
+      {
+        type: 'update',
+        where: [
+          { column: 'repoPath', value: this.basePath },
+          { column: 'name', value: branchName },
+        ],
+        table: 'branches',
+        values: { head: nodeId },
+        layer: 'domain',
+      },
+      agentId,
+    );
+
     // Memory Cache invalidation/warming
     this.nodeCache.set(nodeId, {
-      ...newNode as any,
+      ...(newNode as any),
       data,
       usage,
       metadata,
-      tree: newNode.tree ? JSON.parse(newNode.tree) : undefined
+      tree: newNode.tree ? JSON.parse(newNode.tree) : undefined,
     });
     this.refCache.set(branchName, nodeId);
   }
@@ -590,14 +701,19 @@ export class Repository {
 
   // ─── Checkout ───
 
-  async checkout(branchOrRef: string, options: { resolveTree?: boolean } = { resolveTree: true }): Promise<MemoryNode | null> {
+  async checkout(
+    branchOrRef: string,
+    options: { resolveTree?: boolean } = { resolveTree: true },
+  ): Promise<MemoryNode | null> {
     try {
       const nodeId = await this.resolveRef(branchOrRef);
       const node = await this.getNode(nodeId);
-      
+
       // Resolve full tree if this is a diff or hierarchical node
       if (options.resolveTree && (!node.tree || node.metadata?.isHierarchical)) {
-        console.log(`[AgentGit][Repo] Resolving tree for node ${nodeId.substring(0,7)} (${node.metadata?.isHierarchical ? 'Merkle' : 'Flat'})`);
+        console.log(
+          `[AgentGit][Repo] Resolving tree for node ${nodeId.substring(0, 7)} (${node.metadata?.isHierarchical ? 'Merkle' : 'Flat'})`,
+        );
         node.tree = await this.resolveTree(node);
       }
       return node;
@@ -607,8 +723,6 @@ export class Repository {
     }
   }
 
-
-
   /**
    * Exposes tree cache statistics for observability
    */
@@ -616,7 +730,7 @@ export class Repository {
     return {
       size: this.treeCache.size,
       hits: this.treeCache.hits,
-      misses: this.treeCache.misses
+      misses: this.treeCache.misses,
     };
   }
 
@@ -643,22 +757,32 @@ export class Repository {
   /**
    * Writes a tree snapshot to the CAS trees collection.
    */
-  public async writeTree(transaction: any, entries: Record<string, TreeEntry>, agentId?: string): Promise<string> {
+  public async writeTree(
+    transaction: any,
+    entries: Record<string, TreeEntry>,
+    agentId?: string,
+  ): Promise<string> {
     const hash = this.treeHash(entries);
     const snapshotObj = { id: hash, entries };
-    
-    await this.db.push({
-      type: 'upsert',
-      table: 'trees',
-      where: [{ column: 'repoPath', value: this.basePath }, { column: 'id', value: hash }],
-      values: {
-        repoPath: this.basePath,
-        id: hash,
-        entries: JSON.stringify(entries),
-        createdAt: Date.now()
+
+    await this.db.push(
+      {
+        type: 'upsert',
+        table: 'trees',
+        where: [
+          { column: 'repoPath', value: this.basePath },
+          { column: 'id', value: hash },
+        ],
+        values: {
+          repoPath: this.basePath,
+          id: hash,
+          entries: JSON.stringify(entries),
+          createdAt: Date.now(),
+        },
+        layer: 'domain',
       },
-      layer: 'domain'
-    }, agentId);
+      agentId,
+    );
 
     this.rawTreeCache.set(hash, snapshotObj);
     return hash;
@@ -671,18 +795,21 @@ export class Repository {
   public async writeTreeIsolated(entries: Record<string, TreeEntry>): Promise<string> {
     const hash = this.treeHash(entries);
     const snapshotObj = { id: hash, entries };
-    
+
     await this.db.push({
       type: 'upsert',
       table: 'trees',
-      where: [{ column: 'repoPath', value: this.basePath }, { column: 'id', value: hash }],
+      where: [
+        { column: 'repoPath', value: this.basePath },
+        { column: 'id', value: hash },
+      ],
       values: {
         repoPath: this.basePath,
         id: hash,
         entries: JSON.stringify(entries),
-        createdAt: Date.now()
+        createdAt: Date.now(),
       },
-      layer: 'domain'
+      layer: 'domain',
     });
 
     this.rawTreeCache.set(hash, snapshotObj);
@@ -712,10 +839,10 @@ export class Repository {
 
     const row = await this.db.selectOne('trees', [
       { column: 'repoPath', value: this.basePath },
-      { column: 'id', value: hash }
+      { column: 'id', value: hash },
     ]);
     if (!row) throw new AgentGitError(`Tree ${hash} not found`, 'TREE_NOT_FOUND');
-    
+
     const entries = JSON.parse(row.entries);
     this.rawTreeCache.set(hash, { id: hash, entries });
     return entries;
@@ -753,24 +880,31 @@ export class Repository {
     return resolved;
   }
 
-  private async flattenTree(hash: string, prefix: string, result: Record<string, string>, depth: number = 0): Promise<void> {
+  private async flattenTree(
+    hash: string,
+    prefix: string,
+    result: Record<string, string>,
+    depth: number = 0,
+  ): Promise<void> {
     if (depth > 100) {
       console.warn(`[AgentGit] Tree traversal depth limit exceeded at: ${prefix}`);
       return;
     }
     const entries = await this.getTree(hash);
-    
+
     // Parallelize subtree traversals
-    await Promise.all(Object.entries(entries).map(async ([name, entry]) => {
-      const key = prefix ? `${prefix}/${name}` : name;
-      if (entry.type === 'blob') {
-        result[key] = entry.hash;
-      } else if (entry.type === 'tree') {
-        await this.flattenTree(entry.hash, key, result, depth + 1);
-      } else if (entry.type === 'subrepo') {
-        result[key] = `REPO:${entry.hash}`;
-      }
-    }));
+    await Promise.all(
+      Object.entries(entries).map(async ([name, entry]) => {
+        const key = prefix ? `${prefix}/${name}` : name;
+        if (entry.type === 'blob') {
+          result[key] = entry.hash;
+        } else if (entry.type === 'tree') {
+          await this.flattenTree(entry.hash, key, result, depth + 1);
+        } else if (entry.type === 'subrepo') {
+          result[key] = `REPO:${entry.hash}`;
+        }
+      }),
+    );
   }
 
   async tag(name: string, ref: string, author: string, message?: string): Promise<void> {
@@ -778,32 +912,36 @@ export class Repository {
     await this.db.push({
       type: 'upsert',
       table: 'tags',
-      where: [{ column: 'repoPath', value: this.basePath }, { column: 'name', value: name }],
+      where: [
+        { column: 'repoPath', value: this.basePath },
+        { column: 'name', value: name },
+      ],
       values: {
         repoPath: this.basePath,
         name,
         head,
         author,
         message: message || '',
-        createdAt: Date.now()
+        createdAt: Date.now(),
       },
-      layer: 'domain'
+      layer: 'domain',
     });
   }
 
   async listTags(): Promise<string[]> {
-    const rows = await this.db.selectWhere('tags', [
-      { column: 'repoPath', value: this.basePath }
-    ]);
-    return rows.map(r => r.name).sort();
+    const rows = await this.db.selectWhere('tags', [{ column: 'repoPath', value: this.basePath }]);
+    return rows.map((r) => r.name).sort();
   }
 
   async deleteTag(name: string): Promise<void> {
     await this.db.push({
       type: 'delete',
       table: 'tags',
-      where: [{ column: 'repoPath', value: this.basePath }, { column: 'name', value: name }],
-      layer: 'domain'
+      where: [
+        { column: 'repoPath', value: this.basePath },
+        { column: 'name', value: name },
+      ],
+      layer: 'domain',
     });
   }
 
@@ -841,8 +979,20 @@ export class Repository {
         const treeB = sourceNode?.tree || sourceNode?.data?.tree || {};
         const mergedTree = { ...treeA, ...treeB };
 
-        const res = await this.commit(targetBranch, { ...mergedData, tree: mergedTree }, author, `Merge branch '${sourceBranch}' (no LCA)`);
-        await this.recordRefLog(targetBranch, targetHead, res, author, 'merge', `Merge ${sourceBranch}`);
+        const res = await this.commit(
+          targetBranch,
+          { ...mergedData, tree: mergedTree },
+          author,
+          `Merge branch '${sourceBranch}' (no LCA)`,
+        );
+        await this.recordRefLog(
+          targetBranch,
+          targetHead,
+          res,
+          author,
+          'merge',
+          `Merge ${sourceBranch}`,
+        );
         return res;
       }
 
@@ -853,14 +1003,28 @@ export class Repository {
       const targetNode = await this.getNode(targetHead);
       const baseNode = await this.getNode(lcaId);
 
-      if (sourceNode?.metadata?.isHierarchical && targetNode?.metadata?.isHierarchical && baseNode?.metadata?.isHierarchical) {
+      if (
+        sourceNode?.metadata?.isHierarchical &&
+        targetNode?.metadata?.isHierarchical &&
+        baseNode?.metadata?.isHierarchical
+      ) {
         // High-Performance Hierarchical Merge
         const result = await this.db.runTransaction(async (agentId) => {
-          return this.mergeTrees(null, baseNode.metadata!.treeHash!, sourceNode.metadata!.treeHash!, targetNode.metadata!.treeHash!, agentId);
+          return this.mergeTrees(
+            null,
+            baseNode.metadata!.treeHash!,
+            sourceNode.metadata!.treeHash!,
+            targetNode.metadata!.treeHash!,
+            agentId,
+          );
         });
-        
+
         if (result.conflicts.length > 0) {
-          throw new AgentGitError(`Merge conflicts in: ${result.conflicts.join(', ')}`, 'MERGE_CONFLICT', result.conflicts);
+          throw new AgentGitError(
+            `Merge conflicts in: ${result.conflicts.join(', ')}`,
+            'MERGE_CONFLICT',
+            result.conflicts,
+          );
         }
         newTreeHash = result.hash;
         const mergedTree: Record<string, string> = {};
@@ -870,29 +1034,46 @@ export class Repository {
         // Fallback to Flat Merge
         conflictResult = await this.calculateMerge(lcaId, sourceHead, targetHead);
         if (conflictResult.conflicts.length > 0) {
-          throw new AgentGitError(`Merge conflicts in: ${conflictResult.conflicts.join(', ')}`, 'MERGE_CONFLICT', conflictResult.conflicts);
+          throw new AgentGitError(
+            `Merge conflicts in: ${conflictResult.conflicts.join(', ')}`,
+            'MERGE_CONFLICT',
+            conflictResult.conflicts,
+          );
         }
         if (conflictResult.reasoningConflicts && conflictResult.reasoningConflicts.length > 0) {
-            const highConf = conflictResult.reasoningConflicts.find(c => c.confidence > 0.85);
-            if (highConf) {
-                throw new AgentGitError(`High-confidence reasoning contradiction detected between ${highConf.nodeId} and ${highConf.conflictingNodeId}`, 'REASONING_CONFLICT');
-            }
+          const highConf = conflictResult.reasoningConflicts.find((c) => c.confidence > 0.85);
+          if (highConf) {
+            throw new AgentGitError(
+              `High-confidence reasoning contradiction detected between ${highConf.nodeId} and ${highConf.conflictingNodeId}`,
+              'REASONING_CONFLICT',
+            );
+          }
         }
       }
 
-      const resultNodeId = await this.commit(targetBranch, conflictResult.mergedTree, author,
+      const resultNodeId = await this.commit(
+        targetBranch,
+        conflictResult.mergedTree,
+        author,
         `Merge branch '${sourceBranch}' into '${targetBranch}'`,
-        { 
-          metadata: { 
-            mergeSource: sourceHead, 
-            mergeTarget: targetHead, 
+        {
+          metadata: {
+            mergeSource: sourceHead,
+            mergeTarget: targetHead,
             lca: lcaId,
-            ...(newTreeHash ? { treeHash: newTreeHash, isHierarchical: true } : {})
-          } 
-        }
+            ...(newTreeHash ? { treeHash: newTreeHash, isHierarchical: true } : {}),
+          },
+        },
       );
 
-      await this.recordRefLog(targetBranch, targetHead, resultNodeId, author, 'merge', `Merge ${sourceBranch}`);
+      await this.recordRefLog(
+        targetBranch,
+        targetHead,
+        resultNodeId,
+        author,
+        'merge',
+        `Merge ${sourceBranch}`,
+      );
       return resultNodeId;
     });
   }
@@ -901,7 +1082,12 @@ export class Repository {
    * Merges a hypothesis branch and marks the resulting commit as a 'conclusion'.
    * Automatically generates a REASONING_PROOF.md file documenting the verified logic.
    */
-  async mergeConclusion(sourceBranch: string, targetBranch: string, author: string, message?: string): Promise<string | null> {
+  async mergeConclusion(
+    sourceBranch: string,
+    targetBranch: string,
+    author: string,
+    message?: string,
+  ): Promise<string | null> {
     const sourceHead = await this.resolveRef(sourceBranch);
     const resId = await this.merge(sourceBranch, targetBranch, author);
     if (resId) {
@@ -909,46 +1095,50 @@ export class Repository {
         type: 'update',
         table: 'nodes',
         where: [{ column: 'id', value: resId }],
-        values: { 
+        values: {
           type: 'conclusion',
-          message: message || `Conclusion: Merged hypothesis '${sourceBranch}'`
+          message: message || `Conclusion: Merged hypothesis '${sourceBranch}'`,
         },
-        layer: 'domain'
+        layer: 'domain',
       });
-      
+
       // Generate REASONING_PROOF.md
       if (this.agentContext) {
-          try {
-              const sourceNode = await this.getNode(sourceHead);
-              const kbIds: string[] = [];
-              if (sourceNode.data.knowledgeIds) kbIds.push(...sourceNode.data.knowledgeIds);
-              if (sourceNode.data.factId) kbIds.push(sourceNode.data.factId);
-              if (sourceNode.data.factAId) kbIds.push(sourceNode.data.factAId);
-              if (sourceNode.data.factBId) kbIds.push(sourceNode.data.factBId);
-              
-              if (kbIds.length > 0) {
-                  const pedigree = await this.agentContext.getReasoningPedigree(kbIds[0]);
-                  let proof = `# Reasoning Proof: ${message || sourceNode.message}\n\n`;
-                  proof += `**Conclusion ID:** ${resId}\n`;
-                  proof += `**Effective Confidence:** ${(pedigree.effectiveConfidence * 100).toFixed(1)}%\n\n`;
-                  proof += `## Evidence Chain\n`;
-                  for (const step of pedigree.lineage) {
-                      proof += `- **[${step.nodeId.substring(0,7)}]** (${step.type}): ${step.content.substring(0, 100)}...\n`;
-                  }
-                  
-                  await this.files().writeFile(targetBranch, 'REASONING_PROOF.md', proof, author, {
-                      message: `Generate Reasoning Proof for ${resId.substring(0, 7)}`
-                  });
-              }
-          } catch (e) {
-              console.error('[AgentGit][Reasoning] Failed to generate REASONING_PROOF.md:', e);
+        try {
+          const sourceNode = await this.getNode(sourceHead);
+          const kbIds: string[] = [];
+          if (sourceNode.data.knowledgeIds) kbIds.push(...sourceNode.data.knowledgeIds);
+          if (sourceNode.data.factId) kbIds.push(sourceNode.data.factId);
+          if (sourceNode.data.factAId) kbIds.push(sourceNode.data.factAId);
+          if (sourceNode.data.factBId) kbIds.push(sourceNode.data.factBId);
+
+          if (kbIds.length > 0) {
+            const pedigree = await this.agentContext.getReasoningPedigree(kbIds[0]);
+            let proof = `# Reasoning Proof: ${message || sourceNode.message}\n\n`;
+            proof += `**Conclusion ID:** ${resId}\n`;
+            proof += `**Effective Confidence:** ${(pedigree.effectiveConfidence * 100).toFixed(1)}%\n\n`;
+            proof += `## Evidence Chain\n`;
+            for (const step of pedigree.lineage) {
+              proof += `- **[${step.nodeId.substring(0, 7)}]** (${step.type}): ${step.content.substring(0, 100)}...\n`;
+            }
+
+            await this.files().writeFile(targetBranch, 'REASONING_PROOF.md', proof, author, {
+              message: `Generate Reasoning Proof for ${resId.substring(0, 7)}`,
+            });
           }
+        } catch (e) {
+          console.error('[AgentGit][Reasoning] Failed to generate REASONING_PROOF.md:', e);
+        }
       }
 
       // Update cache
       if (this.nodeCache.has(resId)) {
         const cached = this.nodeCache.get(resId)!;
-        this.nodeCache.set(resId, { ...cached, type: 'conclusion', message: message || cached.message });
+        this.nodeCache.set(resId, {
+          ...cached,
+          type: 'conclusion',
+          message: message || cached.message,
+        });
       }
     }
     return resId;
@@ -957,7 +1147,10 @@ export class Repository {
   /**
    * Identifies all 'hypothesis' and 'conclusion' nodes added or removed between two refs.
    */
-  async getReasoningDiff(refA: string, refB: string): Promise<{
+  async getReasoningDiff(
+    refA: string,
+    refB: string,
+  ): Promise<{
     added: MemoryNode[];
     removed: MemoryNode[];
     commonAncestor: string | null;
@@ -992,7 +1185,10 @@ export class Repository {
    * Speculative Merge Simulation: Forecasts conflicts and blast radius without writing a commit.
    * Perfect for "What-If" analysis in agentic swarms.
    */
-  async simulateMerge(sourceRef: string, targetRef: string): Promise<ConflictResult & { lcaId: string | null; affectedPaths: string[] }> {
+  async simulateMerge(
+    sourceRef: string,
+    targetRef: string,
+  ): Promise<ConflictResult & { lcaId: string | null; affectedPaths: string[] }> {
     const sourceHead = await this.resolveRef(sourceRef);
     const targetHead = await this.resolveRef(targetRef);
     const lcaId = await this.findLCA(sourceHead, targetHead);
@@ -1000,13 +1196,13 @@ export class Repository {
     if (!lcaId) {
       // If no LCA, everything in source might be new
       const sourceNode = await this.getNode(sourceHead);
-      const sourceTree = sourceNode.tree || await this.resolveTree(sourceNode);
+      const sourceTree = sourceNode.tree || (await this.resolveTree(sourceNode));
       return {
         hasConflicts: false,
         conflicts: [],
         mergedTree: sourceTree,
         lcaId: null,
-        affectedPaths: Object.keys(sourceTree)
+        affectedPaths: Object.keys(sourceTree),
       };
     }
 
@@ -1016,27 +1212,34 @@ export class Repository {
 
     let affectedPaths: string[] = [];
     if (sourceNode.metadata?.isHierarchical && baseNode.metadata?.isHierarchical) {
-       // O(log N) Affected Path detection via hash diffing
-       affectedPaths = await this.calculateAffectedPaths(baseNode.metadata.treeHash!, sourceNode.metadata.treeHash!);
+      // O(log N) Affected Path detection via hash diffing
+      affectedPaths = await this.calculateAffectedPaths(
+        baseNode.metadata.treeHash!,
+        sourceNode.metadata.treeHash!,
+      );
     } else {
-       const sourceTree = sourceNode.tree || await this.resolveTree(sourceNode);
-       const baseTree = baseNode.tree || await this.resolveTree(baseNode);
-       affectedPaths = Object.keys(sourceTree).filter(p => sourceTree[p] !== baseTree[p]);
+      const sourceTree = sourceNode.tree || (await this.resolveTree(sourceNode));
+      const baseTree = baseNode.tree || (await this.resolveTree(baseNode));
+      affectedPaths = Object.keys(sourceTree).filter((p) => sourceTree[p] !== baseTree[p]);
     }
 
     return {
       ...conflictResult,
       lcaId,
-      affectedPaths
+      affectedPaths,
     };
   }
 
   /**
    * Recursively identifies paths that differ between two tree hashes.
    */
-  private async calculateAffectedPaths(hashA: string, hashB: string, prefix: string = ''): Promise<string[]> {
+  private async calculateAffectedPaths(
+    hashA: string,
+    hashB: string,
+    prefix: string = '',
+  ): Promise<string[]> {
     if (hashA === hashB) return [];
-    
+
     const entriesA = await this.getTree(hashA);
     const entriesB = await this.getTree(hashB);
     const allNames = new Set([...Object.keys(entriesA), ...Object.keys(entriesB)]);
@@ -1068,7 +1271,13 @@ export class Repository {
     return paths;
   }
 
-  async mergeTrees(transaction: any, baseHash: string, sourceHash: string, targetHash: string, agentId?: string): Promise<{ hash: string, conflicts: string[] }> {
+  async mergeTrees(
+    transaction: any,
+    baseHash: string,
+    sourceHash: string,
+    targetHash: string,
+    agentId?: string,
+  ): Promise<{ hash: string; conflicts: string[] }> {
     if (sourceHash === targetHash) return { hash: sourceHash, conflicts: [] };
     if (sourceHash === baseHash) return { hash: targetHash, conflicts: [] };
     if (targetHash === baseHash) return { hash: sourceHash, conflicts: [] };
@@ -1077,7 +1286,11 @@ export class Repository {
     const sourceEntries = await this.getTree(sourceHash);
     const targetEntries = await this.getTree(targetHash);
 
-    const allNames = new Set([...Object.keys(baseEntries), ...Object.keys(sourceEntries), ...Object.keys(targetEntries)]);
+    const allNames = new Set([
+      ...Object.keys(baseEntries),
+      ...Object.keys(sourceEntries),
+      ...Object.keys(targetEntries),
+    ]);
     const mergedEntries: Record<string, TreeEntry> = {};
     let allConflicts: string[] = [];
 
@@ -1103,10 +1316,12 @@ export class Repository {
 
       // Conflict or recursion
       if (s?.type === 'tree' && t?.type === 'tree') {
-        const promise = this.mergeTrees(transaction, b?.hash || '', s.hash, t.hash, agentId).then(res => {
-          mergedEntries[name] = { type: 'tree', hash: res.hash };
-          allConflicts = allConflicts.concat(res.conflicts.map(c => `${name}/${c}`));
-        });
+        const promise = this.mergeTrees(transaction, b?.hash || '', s.hash, t.hash, agentId).then(
+          (res) => {
+            mergedEntries[name] = { type: 'tree', hash: res.hash };
+            allConflicts = allConflicts.concat(res.conflicts.map((c) => `${name}/${c}`));
+          },
+        );
         subTreePromises.push(promise);
       } else {
         allConflicts.push(name);
@@ -1119,31 +1334,53 @@ export class Repository {
     return { hash: newHash, conflicts: allConflicts };
   }
 
-  private async calculateMerge(baseId: string, sourceId: string, targetId: string): Promise<ConflictResult> {
+  private async calculateMerge(
+    baseId: string,
+    sourceId: string,
+    targetId: string,
+  ): Promise<ConflictResult> {
     const baseNode = await this.getNode(baseId);
     const sourceNode = await this.getNode(sourceId);
     const targetNode = await this.getNode(targetId);
 
-    if (baseNode.metadata?.isHierarchical && sourceNode.metadata?.isHierarchical && targetNode.metadata?.isHierarchical) {
-       const agentId = 'merge';
-       await this.db.beginWork(agentId);
-       try {
-         const result = await this.mergeTrees(null, baseNode.metadata!.treeHash!, sourceNode.metadata!.treeHash!, targetNode.metadata!.treeHash!, agentId);
-         await this.db.commitWork(agentId);
-         const mergedTree: Record<string, string> = {};
-         await this.flattenTree(result.hash, '', mergedTree);
-         return { hasConflicts: result.conflicts.length > 0, conflicts: result.conflicts, mergedTree };
-       } catch (e) {
-         await this.db.rollbackWork(agentId);
-         throw e;
-       }
+    if (
+      baseNode.metadata?.isHierarchical &&
+      sourceNode.metadata?.isHierarchical &&
+      targetNode.metadata?.isHierarchical
+    ) {
+      const agentId = 'merge';
+      await this.db.beginWork(agentId);
+      try {
+        const result = await this.mergeTrees(
+          null,
+          baseNode.metadata!.treeHash!,
+          sourceNode.metadata!.treeHash!,
+          targetNode.metadata!.treeHash!,
+          agentId,
+        );
+        await this.db.commitWork(agentId);
+        const mergedTree: Record<string, string> = {};
+        await this.flattenTree(result.hash, '', mergedTree);
+        return {
+          hasConflicts: result.conflicts.length > 0,
+          conflicts: result.conflicts,
+          mergedTree,
+        };
+      } catch (e) {
+        await this.db.rollbackWork(agentId);
+        throw e;
+      }
     }
 
     const baseTree = await this.resolveTree(baseNode);
     const sourceTree = await this.resolveTree(sourceNode);
     const targetTree = await this.resolveTree(targetNode);
 
-    const allPaths = new Set([...Object.keys(baseTree), ...Object.keys(sourceTree), ...Object.keys(targetTree)]);
+    const allPaths = new Set([
+      ...Object.keys(baseTree),
+      ...Object.keys(sourceTree),
+      ...Object.keys(targetTree),
+    ]);
     const mergedTree: Record<string, string> = {};
     const conflicts: string[] = [];
 
@@ -1165,39 +1402,46 @@ export class Repository {
     }
 
     // --- REASONING CONFLICT DETECTION ---
-    let reasoningConflicts: { nodeId: string; conflictingNodeId: string; confidence: number }[] = [];
+    let reasoningConflicts: { nodeId: string; conflictingNodeId: string; confidence: number }[] =
+      [];
     if (this.agentContext) {
-        try {
-            // Extract KB IDs from the source commit's data
-            const kbIds: string[] = [];
-            if (sourceNode.data.knowledgeIds) kbIds.push(...sourceNode.data.knowledgeIds);
-            if (sourceNode.data.factId) kbIds.push(sourceNode.data.factId);
-            if (sourceNode.data.factAId) kbIds.push(sourceNode.data.factAId);
-            if (sourceNode.data.factBId) kbIds.push(sourceNode.data.factBId);
-            
-            if (kbIds.length > 0) {
-                const auditRes = await this.agentContext.detectContradictions(kbIds, 2);
-                reasoningConflicts = auditRes.map((r: any) => ({
-                    nodeId: r.nodeId,
-                    conflictingNodeId: r.conflictingNodeId,
-                    confidence: r.confidence
-                }));
-            }
-        } catch (e) { /* ignore audit errors */ }
+      try {
+        // Extract KB IDs from the source commit's data
+        const kbIds: string[] = [];
+        if (sourceNode.data.knowledgeIds) kbIds.push(...sourceNode.data.knowledgeIds);
+        if (sourceNode.data.factId) kbIds.push(sourceNode.data.factId);
+        if (sourceNode.data.factAId) kbIds.push(sourceNode.data.factAId);
+        if (sourceNode.data.factBId) kbIds.push(sourceNode.data.factBId);
+
+        if (kbIds.length > 0) {
+          const auditRes = await this.agentContext.detectContradictions(kbIds, 2);
+          reasoningConflicts = auditRes.map((r: any) => ({
+            nodeId: r.nodeId,
+            conflictingNodeId: r.conflictingNodeId,
+            confidence: r.confidence,
+          }));
+        }
+      } catch (e) {
+        /* ignore audit errors */
+      }
     }
 
-    return { 
-        hasConflicts: conflicts.length > 0 || reasoningConflicts.length > 0, 
-        conflicts, 
-        reasoningConflicts,
-        mergedTree 
+    return {
+      hasConflicts: conflicts.length > 0 || reasoningConflicts.length > 0,
+      conflicts,
+      reasoningConflicts,
+      mergedTree,
     };
   }
 
-
   // ─── Summarize (Memory Compaction) ───
 
-  async summarize(branchName: string, summaryData: any, author: string, message: string = 'Memory Compaction'): Promise<string> {
+  async summarize(
+    branchName: string,
+    summaryData: any,
+    author: string,
+    message: string = 'Memory Compaction',
+  ): Promise<string> {
     return this.commit(branchName, summaryData, author, message, { type: 'summary' });
   }
 
@@ -1242,9 +1486,9 @@ export class Repository {
           data: JSON.stringify(node.data),
           tree: JSON.stringify(node.tree || {}),
           label: label || `stash@{${new Date().toISOString()}}`,
-          createdAt: Date.now()
+          createdAt: Date.now(),
         },
-        layer: 'domain'
+        layer: 'domain',
       });
       return id;
     });
@@ -1254,18 +1498,27 @@ export class Repository {
     return executor.execute(`stash-pop:${branch}:${stashId}`, async () => {
       const stash = await this.db.selectOne('stashes', [
         { column: 'repoPath', value: this.basePath },
-        { column: 'id', value: stashId }
+        { column: 'id', value: stashId },
       ]);
       if (!stash) throw new AgentGitError(`Stash '${stashId}' not found`, 'STASH_NOT_FOUND');
 
-      const commitId = await this.commit(branch, JSON.parse(stash.data), author, `Apply stash: ${stash.label}`, {
-        metadata: { stashId, originalBranch: stash.branch },
-      });
+      const commitId = await this.commit(
+        branch,
+        JSON.parse(stash.data),
+        author,
+        `Apply stash: ${stash.label}`,
+        {
+          metadata: { stashId, originalBranch: stash.branch },
+        },
+      );
       await this.db.push({
         type: 'delete',
         table: 'stashes',
-        where: [{ column: 'repoPath', value: this.basePath }, { column: 'id', value: stashId }],
-        layer: 'domain'
+        where: [
+          { column: 'repoPath', value: this.basePath },
+          { column: 'id', value: stashId },
+        ],
+        layer: 'domain',
       });
       return commitId;
     });
@@ -1273,29 +1526,38 @@ export class Repository {
 
   async listStashes(): Promise<StashEntry[]> {
     const rows = await this.db.selectWhere('stashes', [
-      { column: 'repoPath', value: this.basePath }
+      { column: 'repoPath', value: this.basePath },
     ]);
-    return rows.map(r => ({ id: r.id, branch: r.branch, label: r.label }));
+    return rows.map((r) => ({ id: r.id, branch: r.branch, label: r.label }));
   }
 
   // ─── RESET (Hard) ───
 
-  async reset(branch: string, targetRef: string, author: string, options: { mode?: 'hard' | 'soft'; usage?: Usage; metadata?: Record<string, any> } = {}): Promise<void> {
+  async reset(
+    branch: string,
+    targetRef: string,
+    author: string,
+    options: { mode?: 'hard' | 'soft'; usage?: Usage; metadata?: Record<string, any> } = {},
+  ): Promise<void> {
     return executor.execute(`reset:${branch}`, async () => {
       const targetNodeId = await this.resolveRef(targetRef);
       const branchHeadId = await this.resolveRef(branch);
-      
+
       const targetNode = await this.getNode(targetNodeId);
 
-      const oldHead = branchHeadId; 
+      const oldHead = branchHeadId;
       const mode = options.mode || 'hard';
       let finalNodeId = targetNodeId;
 
       if (mode === 'soft') {
         const diffNodeId = this.generateNodeId();
-        const tree = targetNode.tree || await this.resolveTree(targetNode);
-        const metadata = { ...options.metadata, resetMode: 'soft', environment: EnvironmentTracker.capture() };
-        
+        const tree = targetNode.tree || (await this.resolveTree(targetNode));
+        const metadata = {
+          ...options.metadata,
+          resetMode: 'soft',
+          environment: EnvironmentTracker.capture(),
+        };
+
         const diffNode = {
           id: diffNodeId,
           repoPath: this.basePath,
@@ -1314,15 +1576,15 @@ export class Repository {
           type: 'insert',
           table: 'nodes',
           values: diffNode,
-          layer: 'domain'
+          layer: 'domain',
         });
-        
+
         this.nodeCache.set(diffNodeId, {
-          ...diffNode as any,
+          ...(diffNode as any),
           data: {},
           tree,
           usage: options.usage,
-          metadata
+          metadata,
         });
         finalNodeId = diffNodeId;
       }
@@ -1330,13 +1592,23 @@ export class Repository {
       await this.db.push({
         type: 'update',
         table: 'branches',
-        where: [{ column: 'repoPath', value: this.basePath }, { column: 'name', value: branch }],
+        where: [
+          { column: 'repoPath', value: this.basePath },
+          { column: 'name', value: branch },
+        ],
         values: { head: finalNodeId },
-        layer: 'domain'
+        layer: 'domain',
       });
-      
+
       this.refCache.set(branch, finalNodeId);
-      await this.recordRefLog(branch, oldHead, finalNodeId, author, 'reset', `Reset to ${targetRef} (${mode} mode)`);
+      await this.recordRefLog(
+        branch,
+        oldHead,
+        finalNodeId,
+        author,
+        'reset',
+        `Reset to ${targetRef} (${mode} mode)`,
+      );
     });
   }
 
@@ -1360,22 +1632,29 @@ export class Repository {
 
   // ─── Maintenance & GC ───
 
-  public async gc(): Promise<{ prunedNodes: number, prunedTrees: number, vaporizedBranches: number }> {
+  public async gc(): Promise<{
+    prunedNodes: number;
+    prunedTrees: number;
+    vaporizedBranches: number;
+  }> {
     return executor.execute('gc', async () => {
       const oneHourAgo = Date.now() - 60 * 60 * 1000;
       const expiredBranches = await this.db.selectWhere('branches', [
         { column: 'repoPath', value: this.basePath },
-        { column: 'isEphemeral', value: 1 }
+        { column: 'isEphemeral', value: 1 },
       ]);
-      
+
       let vaporizedCount = 0;
       for (const branch of expiredBranches) {
         if (branch.createdAt < oneHourAgo) {
           await this.db.push({
             type: 'delete',
             table: 'branches',
-            where: [{ column: 'repoPath', value: this.basePath }, { column: 'name', value: branch.name }],
-            layer: 'domain'
+            where: [
+              { column: 'repoPath', value: this.basePath },
+              { column: 'name', value: branch.name },
+            ],
+            layer: 'domain',
           });
           vaporizedCount++;
         }
@@ -1384,49 +1663,61 @@ export class Repository {
 
       const reachableNodes = new Set<string>();
       const reachableTrees = new Set<string>();
-      
+
       const [branches, tags, stashes, reflog] = await Promise.all([
         this.db.selectWhere('branches', [{ column: 'repoPath', value: this.basePath }]),
         this.db.selectWhere('tags', [{ column: 'repoPath', value: this.basePath }]),
         this.db.selectWhere('stashes', [{ column: 'repoPath', value: this.basePath }]),
-        this.db.selectWhere('reflog', [{ column: 'repoPath', value: this.basePath }])
+        this.db.selectWhere('reflog', [{ column: 'repoPath', value: this.basePath }]),
       ]);
 
-      const heads = new Set<string>([
-        ...branches.map(d => d.head),
-        ...tags.map(d => d.head),
-        ...stashes.map(d => d.nodeId),
-        ...reflog.map(d => d.newHead),
-        ...reflog.map(d => d.oldHead)
-      ].filter((h): h is string => h !== null));
+      const heads = new Set<string>(
+        [
+          ...branches.map((d) => d.head),
+          ...tags.map((d) => d.head),
+          ...stashes.map((d) => d.nodeId),
+          ...reflog.map((d) => d.newHead),
+          ...reflog.map((d) => d.oldHead),
+        ].filter((h): h is string => h !== null),
+      );
 
       for (const nodeId of heads) {
         await this.markReachable(nodeId, reachableNodes, reachableTrees);
       }
 
-      const allNodes = await this.db.selectWhere('nodes', [{ column: 'repoPath', value: this.basePath }]);
+      const allNodes = await this.db.selectWhere('nodes', [
+        { column: 'repoPath', value: this.basePath },
+      ]);
       let prunedNodes = 0;
       for (const node of allNodes) {
         if (!reachableNodes.has(node.id)) {
           await this.db.push({
             type: 'delete',
             table: 'nodes',
-            where: [{ column: 'repoPath', value: this.basePath }, { column: 'id', value: node.id }],
-            layer: 'domain'
+            where: [
+              { column: 'repoPath', value: this.basePath },
+              { column: 'id', value: node.id },
+            ],
+            layer: 'domain',
           });
           prunedNodes++;
         }
       }
 
-      const allTrees = await this.db.selectWhere('trees', [{ column: 'repoPath', value: this.basePath }]);
+      const allTrees = await this.db.selectWhere('trees', [
+        { column: 'repoPath', value: this.basePath },
+      ]);
       let prunedTrees = 0;
       for (const tree of allTrees) {
         if (!reachableTrees.has(tree.id)) {
           await this.db.push({
             type: 'delete',
             table: 'trees',
-            where: [{ column: 'repoPath', value: this.basePath }, { column: 'id', value: tree.id }],
-            layer: 'domain'
+            where: [
+              { column: 'repoPath', value: this.basePath },
+              { column: 'id', value: tree.id },
+            ],
+            layer: 'domain',
           });
           prunedTrees++;
         }
@@ -1436,7 +1727,11 @@ export class Repository {
     });
   }
 
-  private async markReachable(startNodeId: string, visitedNodes: Set<string>, visitedTrees: Set<string>): Promise<void> {
+  private async markReachable(
+    startNodeId: string,
+    visitedNodes: Set<string>,
+    visitedTrees: Set<string>,
+  ): Promise<void> {
     let currentId: string | null = startNodeId;
     while (currentId) {
       if (visitedNodes.has(currentId)) break;
@@ -1452,7 +1747,11 @@ export class Repository {
     }
   }
 
-  private async markTreeReachable(treeHash: string, visitedTrees: Set<string>, depth: number = 0): Promise<void> {
+  private async markTreeReachable(
+    treeHash: string,
+    visitedTrees: Set<string>,
+    depth: number = 0,
+  ): Promise<void> {
     if (visitedTrees.has(treeHash) || depth > 100) return;
     visitedTrees.add(treeHash);
 
@@ -1469,10 +1768,16 @@ export class Repository {
   async cherryPick(nodeId: string, targetBranch: string, author: string): Promise<string> {
     return executor.execute(`cherry-pick:${targetBranch}:${nodeId}`, async () => {
       const sourceNode = await this.getNode(nodeId);
-      return this.commit(targetBranch, sourceNode.data, author, `Cherry-pick: ${sourceNode.message}`, {
-        type: sourceNode.type,
-        metadata: { ...sourceNode.metadata, cherryPickedFrom: nodeId },
-      });
+      return this.commit(
+        targetBranch,
+        sourceNode.data,
+        author,
+        `Cherry-pick: ${sourceNode.message}`,
+        {
+          type: sourceNode.type,
+          metadata: { ...sourceNode.metadata, cherryPickedFrom: nodeId },
+        },
+      );
     });
   }
 
@@ -1481,7 +1786,7 @@ export class Repository {
   async status(branch: string): Promise<StatusResult> {
     const branchDoc = await this.db.selectOne('branches', [
       { column: 'repoPath', value: this.basePath },
-      { column: 'name', value: branch }
+      { column: 'name', value: branch },
     ]);
     if (!branchDoc) throw new AgentGitError(`Branch '${branch}' not found`, 'BRANCH_NOT_FOUND');
 
@@ -1506,7 +1811,15 @@ export class Repository {
       }
     }
 
-    return { branch, headNodeId, headMessage, headAuthor, fileCount: files.length, files, commitCount };
+    return {
+      branch,
+      headNodeId,
+      headMessage,
+      headAuthor,
+      fileCount: files.length,
+      files,
+      commitCount,
+    };
   }
 
   // ─── BLAME ───
@@ -1522,7 +1835,13 @@ export class Repository {
       if (!(normalizedPath in tree)) {
         if (i > 0) {
           const prev = commits[i - 1]!;
-          return { path: normalizedPath, lastAuthor: prev.author, lastMessage: prev.message, lastNodeId: prev.id, lastTimestamp: prev.timestamp };
+          return {
+            path: normalizedPath,
+            lastAuthor: prev.author,
+            lastMessage: prev.message,
+            lastNodeId: prev.id,
+            lastTimestamp: prev.timestamp,
+          };
         }
         break;
       }
@@ -1531,10 +1850,22 @@ export class Repository {
         const nextNode = commits[i + 1]!;
         const prevTree = await this.resolveTree(nextNode);
         if (tree[normalizedPath] !== prevTree[normalizedPath]) {
-          return { path: normalizedPath, lastAuthor: node.author, lastMessage: node.message, lastNodeId: node.id, lastTimestamp: node.timestamp };
+          return {
+            path: normalizedPath,
+            lastAuthor: node.author,
+            lastMessage: node.message,
+            lastNodeId: node.id,
+            lastTimestamp: node.timestamp,
+          };
         }
       } else {
-        return { path: normalizedPath, lastAuthor: node.author, lastMessage: node.message, lastNodeId: node.id, lastTimestamp: node.timestamp };
+        return {
+          path: normalizedPath,
+          lastAuthor: node.author,
+          lastMessage: node.message,
+          lastNodeId: node.id,
+          lastTimestamp: node.timestamp,
+        };
       }
     }
 
@@ -1551,7 +1882,8 @@ export class Repository {
       if (branchHeadId === ontoNodeId) return branchHeadId;
 
       const lcaId = await this.findLCA(branchHeadId, ontoNodeId);
-      if (!lcaId) throw new AgentGitError('No common ancestor found for rebase', 'NO_COMMON_ANCESTOR');
+      if (!lcaId)
+        throw new AgentGitError('No common ancestor found for rebase', 'NO_COMMON_ANCESTOR');
 
       if (lcaId === branchHeadId) {
         await this.reset(branch, ontoNodeId, author);
@@ -1570,12 +1902,19 @@ export class Repository {
       for (const commit of commitsToReplay) {
         const newNodeId = await this.commit(branch, commit.data, commit.author, commit.message, {
           type: commit.type,
-          metadata: { ...commit.metadata, rebasedFrom: commit.id }
+          metadata: { ...commit.metadata, rebasedFrom: commit.id },
         });
         newHeadId = newNodeId;
       }
 
-      await this.recordRefLog(branch, branchHeadId, newHeadId, author, 'rebase', `Rebase onto ${ontoRef} (${ontoNodeId})`);
+      await this.recordRefLog(
+        branch,
+        branchHeadId,
+        newHeadId,
+        author,
+        'rebase',
+        `Rebase onto ${ontoRef} (${ontoNodeId})`,
+      );
       return newHeadId;
     });
   }
@@ -1584,28 +1923,49 @@ export class Repository {
 
   async squash(branch: string, count: number, author: string, message: string): Promise<string> {
     return executor.execute(`squash:${branch}`, async () => {
-      if (count < 2) throw new AgentGitError('Squash requires at least 2 commits', 'INVALID_SQUASH_COUNT');
+      if (count < 2)
+        throw new AgentGitError('Squash requires at least 2 commits', 'INVALID_SQUASH_COUNT');
 
       const head = await this.checkout(branch);
       if (!head) throw new AgentGitError('Branch is empty', 'EMPTY_BRANCH');
 
       const history = await this.history(branch, count + 1);
-      if (history.length < count) throw new AgentGitError(`Not enough commits to squash (requested ${count}, found ${history.length})`, 'NOT_ENOUGH_HISTORY');
+      if (history.length < count)
+        throw new AgentGitError(
+          `Not enough commits to squash (requested ${count}, found ${history.length})`,
+          'NOT_ENOUGH_HISTORY',
+        );
 
       const nodeId = this.generateNodeId();
       const agentId = author || 'default';
       await this.db.beginWork(agentId);
       try {
-        await this.commitInTransaction(null as any, branch, nodeId, head.data, author, message, {
-          type: 'snapshot'
-        }, agentId);
+        await this.commitInTransaction(
+          null as any,
+          branch,
+          nodeId,
+          head.data,
+          author,
+          message,
+          {
+            type: 'snapshot',
+          },
+          agentId,
+        );
         await this.db.commitWork(agentId);
       } catch (e) {
         await this.db.rollbackWork(agentId);
         throw e;
       }
 
-      await this.recordRefLog(branch, head.id, nodeId, author, 'commit', `Squash ${count} commits: ${message}`);
+      await this.recordRefLog(
+        branch,
+        head.id,
+        nodeId,
+        author,
+        'commit',
+        `Squash ${count} commits: ${message}`,
+      );
       return nodeId;
     });
   }
@@ -1615,18 +1975,22 @@ export class Repository {
   async getRefLog(branch: string, options: { limit?: number } = {}): Promise<RefLogEntry[]> {
     const rows = await this.db.selectWhere('reflog', [
       { column: 'repoPath', value: this.basePath },
-      { column: 'ref', value: branch }
+      { column: 'ref', value: branch },
     ]);
-    
-    let results = rows.map(r => ({
-      ...r,
-      timestamp: Number(r.timestamp)
-    }) as unknown as RefLogEntry).sort((a, b) => b.timestamp - a.timestamp);
-    
+
+    let results = rows
+      .map(
+        (r) =>
+          ({
+            ...r,
+            timestamp: Number(r.timestamp),
+          }) as unknown as RefLogEntry,
+      )
+      .sort((a, b) => b.timestamp - a.timestamp);
+
     if (options.limit) results = results.slice(0, options.limit);
     return results;
   }
-
 
   // ─── ENHANCED LOG ───
 
@@ -1634,7 +1998,7 @@ export class Repository {
     const { limit = 100, author, messageRegex, since, until, taskId } = options;
     const history = await this.history(branch, limit);
 
-    return history.filter(node => {
+    return history.filter((node) => {
       if (author && node.author !== author) return false;
       if (messageRegex && !new RegExp(messageRegex, 'i').test(node.message)) return false;
       if (since && node.timestamp < since.getTime()) return false;
@@ -1667,9 +2031,10 @@ export class Repository {
 
   // ─── HOOKS ───
 
-
-
-  registerHook(event: 'pre-commit' | 'post-commit' | 'post-merge', callback: (data: any) => Promise<void>) {
+  registerHook(
+    event: 'pre-commit' | 'post-commit' | 'post-merge',
+    callback: (data: any) => Promise<void>,
+  ) {
     if (!this.hooks[event]) this.hooks[event] = [];
     this.hooks[event].push(callback);
   }
@@ -1679,14 +2044,17 @@ export class Repository {
     for (const cb of callbacks) await cb(data);
   }
 
-
   // ─── BISECT ───
 
   /**
    * Bisect: Automated binary search through history to find a "bad" commit.
    * testFn should return true if commit is "good", false if "bad".
    */
-  async bisect(badRef: string, goodRef: string, testFn: (node: MemoryNode) => Promise<boolean>): Promise<MemoryNode> {
+  async bisect(
+    badRef: string,
+    goodRef: string,
+    testFn: (node: MemoryNode) => Promise<boolean>,
+  ): Promise<MemoryNode> {
     const badId = await this.resolveRef(badRef);
     const goodId = await this.resolveRef(goodRef);
 
@@ -1701,7 +2069,8 @@ export class Repository {
       }
     }
 
-    if (!foundGood) throw new AgentGitError('Good ref not found in bad ref history', 'BISECT_INVALID_RANGE');
+    if (!foundGood)
+      throw new AgentGitError('Good ref not found in bad ref history', 'BISECT_INVALID_RANGE');
 
     let low = 0;
     let high = range.length - 1;
@@ -1735,8 +2104,8 @@ export class Repository {
 
     for (const node of history) {
       nodes.push(node);
-      const tree = node.tree || await this.resolveTree(node);
-      Object.values(tree).forEach(id => fileIds.add(id as string));
+      const tree = node.tree || (await this.resolveTree(node));
+      Object.values(tree).forEach((id) => fileIds.add(id as string));
       if (node.id === fromId) break;
     }
 
@@ -1758,48 +2127,71 @@ export class Repository {
     try {
       // Import files
       for (const [fid, fdata] of Object.entries(patch.files)) {
-        await this.db.push({
-          type: 'insert',
-          table: 'files',
-          values: { ...fdata as any, id: fid },
-          layer: 'infrastructure'
-        }, agentId);
+        await this.db.push(
+          {
+            type: 'insert',
+            table: 'files',
+            values: { ...(fdata as any), id: fid },
+            layer: 'infrastructure',
+          },
+          agentId,
+        );
       }
 
       // Import nodes
       for (const node of patch.nodes) {
-        await this.db.push({
-          type: 'insert',
-          table: 'nodes',
-          values: {
-            ...node as any,
-            repoPath: this.basePath,
-            data: JSON.stringify(node.data),
-            usage: node.usage ? JSON.stringify(node.usage) : null,
-            metadata: JSON.stringify(node.metadata),
-            tree: node.tree ? JSON.stringify(node.tree) : null
+        await this.db.push(
+          {
+            type: 'insert',
+            table: 'nodes',
+            values: {
+              ...(node as any),
+              repoPath: this.basePath,
+              data: JSON.stringify(node.data),
+              usage: node.usage ? JSON.stringify(node.usage) : null,
+              metadata: JSON.stringify(node.metadata),
+              tree: node.tree ? JSON.stringify(node.tree) : null,
+            },
+            layer: 'domain',
           },
-          layer: 'domain'
-        }, agentId);
+          agentId,
+        );
       }
 
       // Update branch head
-      const branchRef = await this.db.selectOne('branches', [
-        { column: 'repoPath', value: this.basePath },
-        { column: 'name', value: branch }
-      ], agentId);
+      const branchRef = await this.db.selectOne(
+        'branches',
+        [
+          { column: 'repoPath', value: this.basePath },
+          { column: 'name', value: branch },
+        ],
+        agentId,
+      );
       if (!branchRef) throw new AgentGitError(`Branch ${branch} not found`, 'BRANCH_NOT_FOUND');
 
-      await this.db.push({
-        type: 'update',
-        table: 'branches',
-        where: [{ column: 'repoPath', value: this.basePath }, { column: 'name', value: branch }],
-        values: { head: patch.targetNodeId },
-        layer: 'domain'
-      }, agentId);
+      await this.db.push(
+        {
+          type: 'update',
+          table: 'branches',
+          where: [
+            { column: 'repoPath', value: this.basePath },
+            { column: 'name', value: branch },
+          ],
+          values: { head: patch.targetNodeId },
+          layer: 'domain',
+        },
+        agentId,
+      );
 
       await this.db.commitWork(agentId);
-      await this.recordRefLog(branch, branchRef.head, patch.targetNodeId, author, 'commit', `Applied patch ${patch.targetNodeId}`);
+      await this.recordRefLog(
+        branch,
+        branchRef.head,
+        patch.targetNodeId,
+        author,
+        'commit',
+        `Applied patch ${patch.targetNodeId}`,
+      );
       return patch.targetNodeId;
     } catch (e) {
       await this.db.rollbackWork(agentId);
@@ -1813,7 +2205,11 @@ export class Repository {
    * Semantic Context Routing
    * Analyzes history to find files frequently co-modified with the target file.
    */
-  async getContextGraph(branch: string, filePath: string, limit: number = 50): Promise<{ path: string; weight: number }[]> {
+  async getContextGraph(
+    branch: string,
+    filePath: string,
+    limit: number = 50,
+  ): Promise<{ path: string; weight: number }[]> {
     const commits = await this.history(branch, 200); // Analyze last 200 commits for correlations
     const normalizedTarget = filePath.replace(/^\/+/, '').replace(/\/\/+/g, '/');
     const correlations: Record<string, number> = {};
@@ -1857,16 +2253,26 @@ export class Repository {
   async timeTravel(branch: string, targetTime: Date, author: string): Promise<string> {
     return executor.execute(`time-travel:${branch}`, async () => {
       const reflogEntries = await this.getRefLog(branch);
-      const targetEntry = reflogEntries.find(e => e.timestamp < targetTime.getTime());
+      const targetEntry = reflogEntries.find((e) => e.timestamp < targetTime.getTime());
 
       if (!targetEntry) {
-        throw new AgentGitError(`No reflog entry found before ${targetTime.toISOString()}`, 'NOT_ENOUGH_HISTORY');
+        throw new AgentGitError(
+          `No reflog entry found before ${targetTime.toISOString()}`,
+          'NOT_ENOUGH_HISTORY',
+        );
       }
 
       const safeNodeId = targetEntry.newHead;
 
       await this.reset(branch, safeNodeId, author);
-      await this.recordRefLog(branch, null, safeNodeId, author, 'reset', `Time Travel to ${targetTime.toISOString()} (${safeNodeId})`);
+      await this.recordRefLog(
+        branch,
+        null,
+        safeNodeId,
+        author,
+        'reset',
+        `Time Travel to ${targetTime.toISOString()} (${safeNodeId})`,
+      );
 
       return safeNodeId;
     });
@@ -1895,7 +2301,11 @@ export class Repository {
       }
     }
 
-    if (!found) throw new AgentGitError(`Base reference '${baseId}' not found in head's history`, 'NOT_ENOUGH_HISTORY');
+    if (!found)
+      throw new AgentGitError(
+        `Base reference '${baseId}' not found in head's history`,
+        'NOT_ENOUGH_HISTORY',
+      );
 
     // path is now head -> ... -> base+1 -> base
     // Exclude base from the actual applied changes
@@ -1960,12 +2370,15 @@ ${messages.join('\n')}`;
       }
 
       if (!lastKnownDocId) {
-        throw new AgentGitError(`Cannot recover '${normalizedPath}': file never existed in recent history.`, 'FILE_NOT_FOUND');
+        throw new AgentGitError(
+          `Cannot recover '${normalizedPath}': file never existed in recent history.`,
+          'FILE_NOT_FOUND',
+        );
       }
 
       const branchDoc = await this.db.selectOne('branches', [
         { column: 'repoPath', value: this.basePath },
-        { column: 'name', value: branch }
+        { column: 'name', value: branch },
       ]);
       if (!branchDoc) throw new AgentGitError(`Branch ${branch} not found`, 'BRANCH_NOT_FOUND');
 
@@ -1980,16 +2393,17 @@ ${messages.join('\n')}`;
       }
 
       const newTree = { ...headTree, [normalizedPath]: lastKnownDocId };
-      return this.commit(branch, { tree: newTree }, author, `Recovered ${normalizedPath} from commit ${lastKnownCommit}`, {
-        metadata: { treeOp: 'recover', path: normalizedPath, recoveredFrom: lastKnownCommit }
-      });
+      return this.commit(
+        branch,
+        { tree: newTree },
+        author,
+        `Recovered ${normalizedPath} from commit ${lastKnownCommit}`,
+        {
+          metadata: { treeOp: 'recover', path: normalizedPath, recoveredFrom: lastKnownCommit },
+        },
+      );
     });
   }
 
   // ─── HYPER-COGNITION ───
-
 }
-
-
-
-

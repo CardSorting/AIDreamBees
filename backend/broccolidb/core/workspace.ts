@@ -1,9 +1,9 @@
+import type { BufferedDbPool } from '../infrastructure/db/BufferedDbPool.js';
+import type { Schema } from '../infrastructure/db/Config.js';
 import { Connection } from './connection.js';
 import { AgentGitError } from './errors.js';
-import { Repository } from './repository.js';
 import { executor } from './executor.js';
-import { BufferedDbPool } from '../infrastructure/db/BufferedDbPool.js';
-import type { Schema } from '../infrastructure/db/Config.js';
+import { Repository } from './repository.js';
 
 export interface WorkspaceInfo {
   userId: string;
@@ -22,7 +22,12 @@ export class Workspace {
   readonly workspaceId: string;
   public sharedMemoryLayer: string[] = [];
 
-  constructor(dbOrConnection: BufferedDbPool | Connection, userId: string, workspaceId: string, private taskId?: string) {
+  constructor(
+    dbOrConnection: BufferedDbPool | Connection,
+    userId: string,
+    workspaceId: string,
+    private taskId?: string,
+  ) {
     if (!userId || !userId.trim()) {
       throw new AgentGitError('userId is required', 'INVALID_USER_ID');
     }
@@ -46,7 +51,7 @@ export class Workspace {
   get workspacePath(): string {
     return `workspaces/${this.workspaceId}`;
   }
-  
+
   /** Base path for the user silo */
   get userBasePath(): string {
     return `users/${this.userId}`;
@@ -60,7 +65,7 @@ export class Workspace {
           type: 'insert',
           table: 'users',
           values: { id: this.userId, createdAt: Date.now() },
-          layer: 'infrastructure'
+          layer: 'infrastructure',
         });
       }
 
@@ -73,9 +78,9 @@ export class Workspace {
             id: this.workspaceId,
             userId: this.userId,
             sharedMemoryLayer: JSON.stringify([]),
-            createdAt: Date.now()
+            createdAt: Date.now(),
           },
-          layer: 'infrastructure'
+          layer: 'infrastructure',
         });
         this.sharedMemoryLayer = [];
       } else {
@@ -100,9 +105,9 @@ export class Workspace {
           repoId,
           repoPath,
           createdAt: Date.now(),
-          defaultBranch
+          defaultBranch,
         },
-        layer: 'infrastructure'
+        layer: 'infrastructure',
       });
 
       const repo = new Repository(this.db, repoPath);
@@ -133,9 +138,9 @@ export class Workspace {
 
   async listRepos(options: { limit?: number; startAfter?: string } = {}): Promise<string[]> {
     const rows = await this.db.selectWhere('repositories', [
-      { column: 'workspaceId', value: this.workspaceId }
+      { column: 'workspaceId', value: this.workspaceId },
     ]);
-    let ids = rows.map(r => r.id).sort();
+    let ids = rows.map((r) => r.id).sort();
     if (options.startAfter) {
       const idx = ids.indexOf(options.startAfter);
       if (idx >= 0) ids = ids.slice(idx + 1);
@@ -148,13 +153,21 @@ export class Workspace {
     const repo = await this.getRepo(repoId);
     const repoPath = repo.getBasePath();
 
-    const tables: Array<keyof Schema> = ['branches', 'nodes', 'tags', 'files', 'reflog', 'stashes', 'trees'];
+    const tables: Array<keyof Schema> = [
+      'branches',
+      'nodes',
+      'tags',
+      'files',
+      'reflog',
+      'stashes',
+      'trees',
+    ];
     for (const table of tables) {
       await this.db.push({
         type: 'delete',
         table,
         where: [{ column: 'repoPath', value: repoPath }],
-        layer: 'infrastructure'
+        layer: 'infrastructure',
       });
     }
 
@@ -162,7 +175,7 @@ export class Workspace {
       type: 'delete',
       table: 'repositories',
       where: [{ column: 'id', value: repoId }],
-      layer: 'infrastructure'
+      layer: 'infrastructure',
     });
   }
 
@@ -172,7 +185,9 @@ export class Workspace {
       const sourcePath = sourceRepo.getBasePath();
       const newPath = `${this.userBasePath}/repositories/${newRepoId}`;
 
-      const existing = await this.db.selectOne('repositories', [{ column: 'id', value: newRepoId }]);
+      const existing = await this.db.selectOne('repositories', [
+        { column: 'id', value: newRepoId },
+      ]);
       if (existing) throw new AgentGitError(`Repo '${newRepoId}' already exists`, 'REPO_EXISTS');
 
       await this.db.push({
@@ -183,12 +198,20 @@ export class Workspace {
           workspaceId: this.workspaceId,
           repoPath: newPath,
           createdAt: Date.now(),
-          defaultBranch: 'main'
+          defaultBranch: 'main',
         },
-        layer: 'infrastructure'
+        layer: 'infrastructure',
       });
 
-      const tables: Array<keyof Schema> = ['branches', 'nodes', 'tags', 'files', 'reflog', 'stashes', 'trees'];
+      const tables: Array<keyof Schema> = [
+        'branches',
+        'nodes',
+        'tags',
+        'files',
+        'reflog',
+        'stashes',
+        'trees',
+      ];
       for (const table of tables) {
         const rows = await this.db.selectWhere(table, [{ column: 'repoPath', value: sourcePath }]);
         for (const row of rows) {
@@ -196,7 +219,7 @@ export class Workspace {
             type: 'insert',
             table,
             values: { ...row, repoPath: newPath },
-            layer: 'domain'
+            layer: 'domain',
           });
         }
       }
@@ -211,16 +234,21 @@ export class Workspace {
     return this.forkFromRemote(remoteWs, remoteRepoId, localRepoId);
   }
 
-  async push(localRepoId: string, branch: string, remoteWs: Workspace, remoteRepoId: string): Promise<void> {
+  async push(
+    localRepoId: string,
+    branch: string,
+    remoteWs: Workspace,
+    remoteRepoId: string,
+  ): Promise<void> {
     await executor.execute(`repo:push:${localRepoId}:${branch}`, async () => {
       const localRepo = await this.getRepo(localRepoId);
       const remoteRepo = await remoteWs.getRepo(remoteRepoId);
       const localPath = localRepo.getBasePath();
       const remotePath = remoteRepo.getBasePath();
-      
+
       const branchRow = await this.db.selectOne('branches', [
-          { column: 'repoPath', value: localPath },
-          { column: 'name', value: branch }
+        { column: 'repoPath', value: localPath },
+        { column: 'name', value: branch },
       ]);
       if (!branchRow) throw new AgentGitError(`Branch ${branch} not found`, 'BRANCH_NOT_FOUND');
 
@@ -229,60 +257,92 @@ export class Workspace {
 
       // Sync Nodes
       for (const node of history) {
-          await remoteDb.push({
-              type: 'upsert',
-              table: 'nodes' as any,
-              where: [{ column: 'repoPath', value: remotePath }, { column: 'id', value: node.id }],
-              values: { ...node, repoPath: remotePath, data: JSON.stringify(node.data), tree: JSON.stringify(node.tree), usage: JSON.stringify(node.usage), metadata: JSON.stringify(node.metadata) },
-              layer: 'domain'
-          });
+        await remoteDb.push({
+          type: 'upsert',
+          table: 'nodes' as any,
+          where: [
+            { column: 'repoPath', value: remotePath },
+            { column: 'id', value: node.id },
+          ],
+          values: {
+            ...node,
+            repoPath: remotePath,
+            data: JSON.stringify(node.data),
+            tree: JSON.stringify(node.tree),
+            usage: JSON.stringify(node.usage),
+            metadata: JSON.stringify(node.metadata),
+          },
+          layer: 'domain',
+        });
       }
 
       // Update Remote Branch
       await remoteDb.push({
-          type: 'upsert',
-          table: 'branches' as any,
-          where: [{ column: 'repoPath', value: remotePath }, { column: 'name', value: branch }],
-          values: { repoPath: remotePath, name: branch, head: branchRow.head, createdAt: Date.now() },
-          layer: 'domain'
+        type: 'upsert',
+        table: 'branches' as any,
+        where: [
+          { column: 'repoPath', value: remotePath },
+          { column: 'name', value: branch },
+        ],
+        values: { repoPath: remotePath, name: branch, head: branchRow.head, createdAt: Date.now() },
+        layer: 'domain',
       });
     });
   }
 
-  async pull(localRepoId: string, branch: string, remoteWs: Workspace, remoteRepoId: string): Promise<void> {
+  async pull(
+    localRepoId: string,
+    branch: string,
+    remoteWs: Workspace,
+    remoteRepoId: string,
+  ): Promise<void> {
     await remoteWs.push(remoteRepoId, branch, this, localRepoId);
   }
 
-  private async forkFromRemote(remoteWs: Workspace, remoteRepoId: string, newRepoId: string): Promise<Repository> {
+  private async forkFromRemote(
+    remoteWs: Workspace,
+    remoteRepoId: string,
+    newRepoId: string,
+  ): Promise<Repository> {
     const remoteRepo = await remoteWs.getRepo(remoteRepoId);
     const remotePath = remoteRepo.getBasePath();
     const localPath = `${this.userBasePath}/repositories/${newRepoId}`;
 
     await this.db.push({
-        type: 'insert',
-        table: 'repositories',
-        values: {
-            id: newRepoId,
-            workspaceId: this.workspaceId,
-            repoPath: localPath,
-            createdAt: Date.now()
-        },
-        layer: 'infrastructure'
+      type: 'insert',
+      table: 'repositories',
+      values: {
+        id: newRepoId,
+        workspaceId: this.workspaceId,
+        repoPath: localPath,
+        createdAt: Date.now(),
+      },
+      layer: 'infrastructure',
     });
 
-    const tables: Array<keyof Schema> = ['branches', 'nodes', 'tags', 'files', 'reflog', 'stashes', 'trees'];
+    const tables: Array<keyof Schema> = [
+      'branches',
+      'nodes',
+      'tags',
+      'files',
+      'reflog',
+      'stashes',
+      'trees',
+    ];
     const remoteDb = remoteWs.getDb();
 
     for (const table of tables) {
-        const rows = await remoteDb.selectWhere(table as any, [{ column: 'repoPath', value: remotePath }]);
-        for (const row of rows) {
-            await this.db.push({
-                type: 'insert',
-                table: table as any,
-                values: { ...row, repoPath: localPath },
-                layer: 'domain'
-            });
-        }
+      const rows = await remoteDb.selectWhere(table as any, [
+        { column: 'repoPath', value: remotePath },
+      ]);
+      for (const row of rows) {
+        await this.db.push({
+          type: 'insert',
+          table: table as any,
+          values: { ...row, repoPath: localPath },
+          layer: 'domain',
+        });
+      }
     }
 
     const repo = new Repository(this.db, localPath);

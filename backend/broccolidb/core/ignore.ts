@@ -27,7 +27,7 @@ export class AgentIgnore {
    */
   isIgnored(filePath: string): boolean {
     const normalized = filePath.replace(/^\/+/, '');
-    if (!normalized || normalized === '.agentignore') return false; 
+    if (!normalized || normalized === '.agentignore') return false;
     return this.ig.ignores(normalized);
   }
 }

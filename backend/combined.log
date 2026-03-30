@@ -20,3 +20,6 @@
 {"level":"info","message":"--- 🥦 Nano Banana 2 PRODUCTION-HARDENED Server with BroccoliDB ---","timestamp":"2026-03-30T07:09:37.754Z"}
 {"level":"info","message":"Server listening on http://localhost:3001","timestamp":"2026-03-30T07:09:37.755Z"}
 {"level":"info","message":"::1 - - [30/Mar/2026:07:09:44 +0000] \"GET / HTTP/1.1\" 200 96 \"-\" \"curl/8.7.1\"","timestamp":"2026-03-30T07:09:44.330Z"}
+{"level":"info","message":"::1 - - [30/Mar/2026:07:10:10 +0000] \"GET / HTTP/1.1\" 200 96 \"-\" \"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36\"","timestamp":"2026-03-30T07:10:10.050Z"}
+{"level":"info","message":"::1 - - [30/Mar/2026:07:10:10 +0000] \"GET /favicon.ico HTTP/1.1\" 404 150 \"-\" \"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36\"","timestamp":"2026-03-30T07:10:10.271Z"}
+{"level":"info","message":"::1 - - [30/Mar/2026:07:10:12 +0000] \"GET /sw.js HTTP/1.1\" 404 144 \"http://localhost:3001/sw.js\" \"Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/146.0.0.0 Safari/537.36\"","timestamp":"2026-03-30T07:10:12.095Z"}

@@ -1,19 +1,19 @@
 import * as chokidar from 'chokidar';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import { Repository } from './repository.js';
 import { AgentGitError } from './errors.js';
+import type { Repository } from './repository.js';
 
 export class LocalWatcher {
   private watcher: chokidar.FSWatcher | null = null;
   private isProcessing = false;
-  private queue: { type: 'add' | 'change' | 'unlink', filePath: string }[] = [];
+  private queue: { type: 'add' | 'change' | 'unlink'; filePath: string }[] = [];
 
   constructor(
     private readonly repo: Repository,
     private readonly branch: string,
     private readonly localDirPath: string,
-    private readonly author: string = 'agent-watcher'
+    private readonly author: string = 'agent-watcher',
   ) {}
 
   public async start(): Promise<void> {
@@ -27,14 +27,14 @@ export class LocalWatcher {
       ignoreInitial: true,
       awaitWriteFinish: {
         stabilityThreshold: 100,
-        pollInterval: 100
-      }
+        pollInterval: 100,
+      },
     });
 
     this.watcher
-      .on('add', filePath => this.enqueue('add', filePath))
-      .on('change', filePath => this.enqueue('change', filePath))
-      .on('unlink', filePath => this.enqueue('unlink', filePath));
+      .on('add', (filePath) => this.enqueue('add', filePath))
+      .on('change', (filePath) => this.enqueue('change', filePath))
+      .on('unlink', (filePath) => this.enqueue('unlink', filePath));
 
     console.log(`[LocalWatcher] Started watching ${this.localDirPath}`);
   }
@@ -62,14 +62,18 @@ export class LocalWatcher {
         if (!item) continue;
 
         const relPath = path.relative(this.localDirPath, item.filePath);
-        
+
         try {
           if (item.type === 'unlink') {
-            await this.repo.files().deleteFile(this.branch, relPath, this.author, { message: `Auto-delete ${relPath}` });
+            await this.repo
+              .files()
+              .deleteFile(this.branch, relPath, this.author, { message: `Auto-delete ${relPath}` });
             console.log(`[LocalWatcher] Synced deletion of ${relPath}`);
           } else {
             const content = await fs.readFile(item.filePath, 'utf-8');
-            await this.repo.files().writeFile(this.branch, relPath, content, this.author, { message: `Auto-update ${relPath}` });
+            await this.repo.files().writeFile(this.branch, relPath, content, this.author, {
+              message: `Auto-update ${relPath}`,
+            });
             console.log(`[LocalWatcher] Synced update of ${relPath}`);
           }
         } catch (err: any) {

@@ -1,4 +1,4 @@
-export type AgentGitErrorCode = 
+export type AgentGitErrorCode =
   | 'INVALID_USER_ID'
   | 'INVALID_PROJECT_ID'
   | 'INVALID_WORKSPACE_ID'
@@ -34,9 +34,9 @@ export type AgentGitErrorCode =
 
 export class AgentGitError extends Error {
   constructor(
-    message: string, 
-    public code: AgentGitErrorCode, 
-    public conflicts?: string[]
+    message: string,
+    public code: AgentGitErrorCode,
+    public conflicts?: string[],
   ) {
     super(message);
     this.name = 'AgentGitError';
@@ -52,21 +52,24 @@ export class PathSanitizer {
     // 1. Strip leading/trailing slashes
     // 2. Collapse double slashes
     // 3. Prevent ../ or ./ segments
-    let clean = path.replace(/^\/+/, '').replace(/\/+$/, '').replace(/\/\/+/g, '/');
+    const clean = path.replace(/^\/+/, '').replace(/\/+$/, '').replace(/\/\/+/g, '/');
     if (clean === '.' || clean === '..') return '';
     return clean;
   }
 
   static validate(path: string): string {
-    const normalized = this.normalize(path);
+    const normalized = PathSanitizer.normalize(path);
     if (!normalized) throw new AgentGitError('Invalid or empty path', 'INVALID_PATH');
-    
+
     // Check for malicious segments
     const parts = normalized.split('/');
-    if (parts.some(p => p === '..' || p === '.')) {
-      throw new AgentGitError(`Security breach attempt: path traversal detected in '${path}'`, 'INVALID_PATH');
+    if (parts.some((p) => p === '..' || p === '.')) {
+      throw new AgentGitError(
+        `Security breach attempt: path traversal detected in '${path}'`,
+        'INVALID_PATH',
+      );
     }
-    
+
     return normalized;
   }
 }

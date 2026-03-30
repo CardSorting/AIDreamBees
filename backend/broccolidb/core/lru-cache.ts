@@ -5,7 +5,7 @@ export class LRUCache<K, V> {
   private _misses = 0;
 
   constructor(capacity: number) {
-    if (capacity <= 0) throw new Error("Capacity must be greater than 0");
+    if (capacity <= 0) throw new Error('Capacity must be greater than 0');
     this.capacity = capacity;
     this.cache = new Map<K, V>();
   }

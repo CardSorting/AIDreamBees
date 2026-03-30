@@ -1,0 +1,7 @@
+# Biome Project-wide Ignores
+node_modules/
+dist/
+*.log
+*.db*
+.env
+.gemini/

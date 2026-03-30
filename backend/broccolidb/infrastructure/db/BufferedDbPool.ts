@@ -1,6 +1,6 @@
-import { Kysely, sql } from "kysely";
-import { getDb, type Schema } from "./Config.js";
-import * as crypto from "node:crypto";
+import * as crypto from 'node:crypto';
+import { type Kysely, sql } from 'kysely';
+import { getDb, type Schema } from './Config.js';
 
 // Minimal Mutex implementation for porting
 class Mutex {
@@ -18,18 +18,18 @@ class Mutex {
   }
 }
 
-export type DbLayer = "domain" | "infrastructure" | "ui" | "plumbing";
+export type DbLayer = 'domain' | 'infrastructure' | 'ui' | 'plumbing';
 
-type WhereCondition = { 
-  column: string; 
+type WhereCondition = {
+  column: string;
   value: string | number | string[] | number[] | null;
   operator?: '=' | '<' | '>' | '<=' | '>=' | '!=' | 'IN';
 };
 
-export type Increment = { _type: "increment"; value: number };
+export type Increment = { _type: 'increment'; value: number };
 
 export type WriteOp = {
-  type: "insert" | "update" | "delete" | "upsert";
+  type: 'insert' | 'update' | 'delete' | 'upsert';
   table: keyof Schema;
   values?: Record<string, any | Increment>;
   where?: WhereCondition | WhereCondition[];
@@ -53,8 +53,8 @@ export class BufferedDbPool {
   private globalBuffer: WriteOp[] = [];
   private inFlightOps: WriteOp[] = [];
   private agentShadows = new Map<string, { ops: WriteOp[]; affectedFiles: Set<string> }>();
-  private stateMutex = new Mutex("DbStateMutex");
-  private flushMutex = new Mutex("DbFlushMutex");
+  private stateMutex = new Mutex('DbStateMutex');
+  private flushMutex = new Mutex('DbFlushMutex');
   private flushInterval: NodeJS.Timeout | null = null;
   private db: Kysely<Schema> | null = null;
 
@@ -109,7 +109,7 @@ export class BufferedDbPool {
     }
 
     if (shouldFlush) {
-      this.flush().catch((e) => console.error("[DbPool] Auto-flush error:", e));
+      this.flush().catch((e) => console.error('[DbPool] Auto-flush error:', e));
     }
   }
 
@@ -170,8 +170,8 @@ export class BufferedDbPool {
           return;
         }
         opsToFlush = [...this.globalBuffer].sort((a, b) => {
-          const pA = LAYER_PRIORITY[a.layer || "plumbing"];
-          const pB = LAYER_PRIORITY[b.layer || "plumbing"];
+          const pA = LAYER_PRIORITY[a.layer || 'plumbing'];
+          const pB = LAYER_PRIORITY[b.layer || 'plumbing'];
           return pA - pB;
         });
         this.globalBuffer = [];
@@ -188,13 +188,13 @@ export class BufferedDbPool {
         let currentGroup: WriteOp[] = [];
 
         for (const op of opsToFlush) {
-          if (op.type === "insert" && op.values) {
-             if (currentGroup.length > 0 && currentGroup[0]!.table === op.table) {
-               currentGroup.push(op);
-             } else {
-               if (currentGroup.length > 0) processedGroups.push(currentGroup);
-               currentGroup = [op];
-             }
+          if (op.type === 'insert' && op.values) {
+            if (currentGroup.length > 0 && currentGroup[0]!.table === op.table) {
+              currentGroup.push(op);
+            } else {
+              if (currentGroup.length > 0) processedGroups.push(currentGroup);
+              currentGroup = [op];
+            }
           } else {
             if (currentGroup.length > 0) processedGroups.push(currentGroup);
             currentGroup = [];
@@ -205,48 +205,47 @@ export class BufferedDbPool {
 
         for (const group of processedGroups) {
           const first = group[0]!;
-          if (group.length > 1 && first.type === "insert") {
+          if (group.length > 1 && first.type === 'insert') {
             // Bulk insert
             await trx
               .insertInto(first.table as any)
-              .values(group.map(op => op.values!) as any)
+              .values(group.map((op) => op.values!) as any)
               .execute();
           } else {
             for (const op of group) {
               const conditions = normalizeWhere(op.where);
-              if (op.type === "insert" && op.values) {
+              if (op.type === 'insert' && op.values) {
                 await trx
                   .insertInto(op.table as any)
                   .values(op.values as any)
                   .execute();
-              } else if (op.type === "upsert" && op.values) {
+              } else if (op.type === 'upsert' && op.values) {
                 // ... (rest of the upsert/update/delete logic remains same but optimized)
                 const valuesWithNoIncrements: any = {};
                 const increments: Record<string, number> = {};
                 for (const [k, v] of Object.entries(op.values)) {
-                    if (v && typeof v === 'object' && (v as any)._type === 'increment') {
-                        increments[k] = (v as any).value;
-                    } else {
-                        valuesWithNoIncrements[k] = v;
-                    }
+                  if (v && typeof v === 'object' && (v as any)._type === 'increment') {
+                    increments[k] = (v as any).value;
+                  } else {
+                    valuesWithNoIncrements[k] = v;
+                  }
                 }
 
-                let query = trx
+                const query = trx
                   .insertInto(op.table as any)
                   .values(valuesWithNoIncrements as any)
                   .onConflict((oc: any) => {
-                      const conflictTarget = conditions.length > 0 
-                        ? conditions.map(c => c.column) 
-                        : ['id'];
-                      
-                      let updateSet: any = { ...valuesWithNoIncrements };
-                      for (const [k, v] of Object.entries(increments)) {
-                          updateSet[k] = sql`${sql.ref(k)} + ${v}`;
-                      }
-                      return oc.columns(conflictTarget).doUpdateSet(updateSet);
+                    const conflictTarget =
+                      conditions.length > 0 ? conditions.map((c) => c.column) : ['id'];
+
+                    const updateSet: any = { ...valuesWithNoIncrements };
+                    for (const [k, v] of Object.entries(increments)) {
+                      updateSet[k] = sql`${sql.ref(k)} + ${v}`;
+                    }
+                    return oc.columns(conflictTarget).doUpdateSet(updateSet);
                   });
                 await query.execute();
-              } else if (op.type === "update" && op.values) {
+              } else if (op.type === 'update' && op.values) {
                 let query = trx.updateTable(op.table as any);
                 const sets: any = {};
                 for (const [k, v] of Object.entries(op.values)) {
@@ -258,13 +257,13 @@ export class BufferedDbPool {
                 }
                 query = query.set(sets);
                 for (const cond of conditions) {
-                  query = query.where(cond.column as any, "=", cond.value as any);
+                  query = query.where(cond.column as any, '=', cond.value as any);
                 }
                 await query.execute();
-              } else if (op.type === "delete") {
+              } else if (op.type === 'delete') {
                 let query = trx.deleteFrom(op.table as any);
                 for (const cond of conditions) {
-                  const opStr = cond.operator || "=";
+                  const opStr = cond.operator || '=';
                   query = query.where(cond.column as any, opStr as any, cond.value as any);
                 }
                 await query.execute();
@@ -281,7 +280,7 @@ export class BufferedDbPool {
         releaseStateClear();
       }
     } catch (e) {
-      console.error("[DbPool] Flush failed, restoring ops to buffer:", e);
+      console.error('[DbPool] Flush failed, restoring ops to buffer:', e);
       const releaseState = await this.stateMutex.acquire();
       try {
         this.globalBuffer.unshift(...opsToFlush);
@@ -300,10 +299,10 @@ export class BufferedDbPool {
     table: T,
     where: WhereCondition | WhereCondition[],
     agentId?: string,
-    options?: { 
+    options?: {
       orderBy?: { column: keyof Schema[T]; direction: 'asc' | 'desc' };
       limit?: number;
-    }
+    },
   ): Promise<Schema[T][]> {
     const release = await this.stateMutex.acquire();
     try {
@@ -312,9 +311,9 @@ export class BufferedDbPool {
 
       let query = db.selectFrom(table as any).selectAll();
       for (const cond of conditions) {
-        const opStr = cond.operator || "=";
+        const opStr = cond.operator || '=';
         if (Array.isArray(cond.value)) {
-          query = query.where(cond.column as any, "in", cond.value as any);
+          query = query.where(cond.column as any, 'in', cond.value as any);
         } else {
           query = query.where(cond.column as any, opStr as any, cond.value as any);
         }
@@ -334,12 +333,12 @@ export class BufferedDbPool {
         for (const op of ops) {
           if (op.table !== table) continue;
 
-          if ((op.type === "insert" || op.type === "upsert") && op.values) {
+          if ((op.type === 'insert' || op.type === 'upsert') && op.values) {
             const rec = op.values as unknown as Schema[T];
             const upsertConds = normalizeWhere(op.where);
             const pkMatch = (r: any) => {
               if (upsertConds.length > 0) {
-                return upsertConds.every(c => r[c.column] === c.value);
+                return upsertConds.every((c) => r[c.column] === c.value);
               }
               if ((r as any).id && (rec as any).id) return r.id === (rec as any).id;
               return false;
@@ -350,27 +349,28 @@ export class BufferedDbPool {
             } else {
               results.push(rec);
             }
-          } else if (op.type === "delete" && op.where) {
+          } else if (op.type === 'delete' && op.where) {
             const delConds = normalizeWhere(op.where);
             results = results.filter((r) => {
               const rec = r as Record<string, unknown>;
               return !delConds.every((c) => rec[c.column] === c.value);
             });
-          } else if (op.type === "update" && op.where && op.values) {
+          } else if (op.type === 'update' && op.where && op.values) {
             const updConds = normalizeWhere(op.where);
             results = results.map((r) => {
               const rec = r as Record<string, unknown>;
               const match = updConds.every((c) => {
-                  const val = rec[c.column];
-                  const opStr = c.operator || '=';
-                  if (opStr === '=') return val === c.value;
-                  if (opStr === '!=') return val !== c.value;
-                  if (opStr === '>') return (val as any) > (c.value as any);
-                  if (opStr === '<') return (val as any) < (c.value as any);
-                  if (opStr === '>=') return (val as any) >= (c.value as any);
-                  if (opStr === '<=') return (val as any) <= (c.value as any);
-                  if (opStr === 'IN' && Array.isArray(c.value)) return (c.value as any[]).includes(val as any);
-                  return false;
+                const val = rec[c.column];
+                const opStr = c.operator || '=';
+                if (opStr === '=') return val === c.value;
+                if (opStr === '!=') return val !== c.value;
+                if (opStr === '>') return (val as any) > (c.value as any);
+                if (opStr === '<') return (val as any) < (c.value as any);
+                if (opStr === '>=') return (val as any) >= (c.value as any);
+                if (opStr === '<=') return (val as any) <= (c.value as any);
+                if (opStr === 'IN' && Array.isArray(c.value))
+                  return (c.value as any[]).includes(val as any);
+                return false;
               });
               if (match) {
                 return { ...r, ...op.values } as unknown as Schema[T];
@@ -396,9 +396,9 @@ export class BufferedDbPool {
         const col = options.orderBy.column as string;
         const dir = options.orderBy.direction;
         finalResults.sort((a: any, b: any) => {
-           if (a[col] < b[col]) return dir === 'asc' ? -1 : 1;
-           if (a[col] > b[col]) return dir === 'asc' ? 1 : -1;
-           return 0;
+          if (a[col] < b[col]) return dir === 'asc' ? -1 : 1;
+          if (a[col] > b[col]) return dir === 'asc' ? 1 : -1;
+          return 0;
         });
       }
       if (options?.limit) {
@@ -421,7 +421,7 @@ export class BufferedDbPool {
   }
 
   public static increment(value: number): Increment {
-    return { _type: "increment", value };
+    return { _type: 'increment', value };
   }
 
   public async stop() {

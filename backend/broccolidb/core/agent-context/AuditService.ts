@@ -1,21 +1,22 @@
-import type { 
-  ImpactReport, 
-  ServiceContext 
-} from './types.js';
-import { GraphService } from './GraphService.js';
-import { ReasoningService } from './ReasoningService.js';
 import * as crypto from 'node:crypto';
+import type { GraphService } from './GraphService.js';
+import type { ReasoningService } from './ReasoningService.js';
+import type { ImpactReport, ServiceContext } from './types.js';
 
 export class AuditService {
   constructor(
-    private ctx: ServiceContext, 
-    private graph: GraphService, 
-    private reasoning: ReasoningService
+    private ctx: ServiceContext,
+    private graph: GraphService,
+    private reasoning: ReasoningService,
   ) {}
 
-  async checkConstitutionalViolation(path: string, code: string, ruleContent: string): Promise<{ violated: boolean; reason?: string }> {
+  async checkConstitutionalViolation(
+    path: string,
+    code: string,
+    ruleContent: string,
+  ): Promise<{ violated: boolean; reason?: string }> {
     if (!this.ctx.aiService?.isAvailable()) {
-        return { violated: false };
+      return { violated: false };
     }
     return this.ctx.aiService.auditCodeAgainstRule(path, code, ruleContent);
   }
@@ -23,26 +24,30 @@ export class AuditService {
   async predictEffect(kbId: string): Promise<ImpactReport> {
     const node = await this.graph.getKnowledge(kbId);
     const contradictions = await this.reasoning.detectContradictions(kbId, 2);
-    
+
     const isValid = contradictions.length === 0;
     const suggestions: string[] = [];
-    
+
     if (!isValid) {
       suggestions.push(`Hypothesis ${kbId} contradicts ${contradictions.length} existing nodes.`);
-      suggestions.push("Consider adjusting the hypothesis or providing more evidence.");
+      suggestions.push('Consider adjusting the hypothesis or providing more evidence.');
     } else {
-      suggestions.push("No direct contradictions found in immediate neighborhood.");
+      suggestions.push('No direct contradictions found in immediate neighborhood.');
     }
 
     return {
       isValid,
       contradictions,
       suggestions,
-      soundnessDelta: isValid ? 0.05 : -0.2
+      soundnessDelta: isValid ? 0.05 : -0.2,
     };
   }
 
-  async addLogicalConstraint(pathPattern: string, knowledgeId: string, severity: 'blocking' | 'warning' = 'blocking'): Promise<void> {
+  async addLogicalConstraint(
+    pathPattern: string,
+    knowledgeId: string,
+    severity: 'blocking' | 'warning' = 'blocking',
+  ): Promise<void> {
     const id = crypto.randomUUID();
     await this.ctx.push({
       type: 'insert',
@@ -52,20 +57,22 @@ export class AuditService {
         knowledgeId,
         pathPattern,
         severity,
-        repoPath: this.ctx.workspace.workspaceId
+        repoPath: this.ctx.workspace.workspaceId,
       },
-      layer: 'domain'
+      layer: 'domain',
     });
   }
 
-  async getLogicalConstraints(): Promise<{ knowledgeId: string; pathPattern: string; severity: string }[]> {
+  async getLogicalConstraints(): Promise<
+    { knowledgeId: string; pathPattern: string; severity: string }[]
+  > {
     const rows = await this.ctx.db.selectWhere('logical_constraints', [
-        { column: 'repoPath', value: this.ctx.workspace.workspaceId }
+      { column: 'repoPath', value: this.ctx.workspace.workspaceId },
     ]);
-    return rows.map(r => ({
-        knowledgeId: r.knowledgeId,
-        pathPattern: r.pathPattern,
-        severity: r.severity
+    return rows.map((r) => ({
+      knowledgeId: r.knowledgeId,
+      pathPattern: r.pathPattern,
+      severity: r.severity,
     }));
   }
 }

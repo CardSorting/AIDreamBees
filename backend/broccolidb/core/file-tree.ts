@@ -1,9 +1,9 @@
-import { AgentGitError, PathSanitizer } from './errors.js';
-import type { Repository, MemoryNode, TreeEntry, TreeSnapshot } from './repository.js';
-import { BufferedDbPool } from '../infrastructure/db/BufferedDbPool.js';
 import * as crypto from 'node:crypto';
+import type { BufferedDbPool } from '../infrastructure/db/BufferedDbPool.js';
+import { AgentGitError, PathSanitizer } from './errors.js';
 import { AgentIgnore } from './ignore.js';
 import { TaskMutex } from './mutex.js';
+import type { MemoryNode, Repository, TreeEntry, TreeSnapshot } from './repository.js';
 
 export interface FileEntry {
   path: string;
@@ -24,7 +24,7 @@ export interface FileEntry {
 export class FileTree {
   private db: BufferedDbPool;
   private repo: Repository;
-  private ignoreCache: Map<string, { rules: AgentIgnore, head: string }> = new Map();
+  private ignoreCache: Map<string, { rules: AgentIgnore; head: string }> = new Map();
 
   constructor(db: BufferedDbPool, repo: Repository) {
     this.db = db;
@@ -43,10 +43,7 @@ export class FileTree {
 
   /** Deterministic document ID from file content and encoding (CAS) */
   private fileDocId(content: string, encoding: string): string {
-    return crypto.createHash('sha256')
-      .update(content)
-      .update(encoding)
-      .digest('hex'); // Full 64 chars
+    return crypto.createHash('sha256').update(content).update(encoding).digest('hex'); // Full 64 chars
   }
 
   private normalizePath(path: string): string {
@@ -61,7 +58,11 @@ export class FileTree {
     path: string,
     content: string,
     author: string,
-    options: { encoding?: 'utf-8' | 'base64'; message?: string; decisionIds?: string[] | undefined } = {}
+    options: {
+      encoding?: 'utf-8' | 'base64';
+      message?: string;
+      decisionIds?: string[] | undefined;
+    } = {},
   ): Promise<string> {
     const normalizedPath = this.normalizePath(path);
     if (!normalizedPath) {
@@ -104,9 +105,9 @@ export class FileTree {
             table: 'files',
             values: {
               id: fileDocId,
-              ...fileEntry
+              ...fileEntry,
             },
-            layer: 'domain'
+            layer: 'domain',
           });
         }
 
@@ -120,11 +121,11 @@ export class FileTree {
 
         // 4. Commit
         await this.repo.commitInTransaction(this.db, branch, nodeId, {}, author, message, {
-          metadata: { 
-            treeOp: 'write', 
-            path: normalizedPath, 
+          metadata: {
+            treeOp: 'write',
+            path: normalizedPath,
             treeHash: newRootHash,
-            isHierarchical: true 
+            isHierarchical: true,
           },
         });
       });
@@ -139,7 +140,7 @@ export class FileTree {
   private async writeHierarchy(
     currentRootHash: string | null,
     path: string,
-    entry: TreeEntry | null // null means delete
+    entry: TreeEntry | null, // null means delete
   ): Promise<string> {
     const parts = path.split('/');
     const name = parts[0]!;
@@ -153,7 +154,7 @@ export class FileTree {
     if (remaining) {
       // It's a directory
       const subTreeEntry = entries[name];
-      const subTreeHash = (subTreeEntry?.type === 'tree') ? subTreeEntry.hash : null;
+      const subTreeHash = subTreeEntry?.type === 'tree' ? subTreeEntry.hash : null;
       const newSubTreeHash = await this.writeHierarchy(subTreeHash, remaining, entry);
       entries[name] = { type: 'tree', hash: newSubTreeHash };
     } else {
@@ -171,7 +172,11 @@ export class FileTree {
   /**
    * Read a file from the current head of a branch.
    */
-  async readFile(branch: string, path: string, options: { skipIgnore?: boolean } = {}): Promise<FileEntry> {
+  async readFile(
+    branch: string,
+    path: string,
+    options: { skipIgnore?: boolean } = {},
+  ): Promise<FileEntry> {
     const normalizedPath = this.normalizePath(path);
 
     const currentNode = await this.repo.checkout(branch, { resolveTree: false });
@@ -192,22 +197,28 @@ export class FileTree {
       if (!currentNode) {
         throw new AgentGitError(`Branch '${branch}' is empty`, 'EMPTY_TREE');
       }
-      
+
       // Re-resolve tree if missing
       if (!currentNode.tree) {
         await this.repo.resolveTree(currentNode);
       }
-      
+
       fileDocId = currentNode.tree?.[normalizedPath];
     }
 
     if (!fileDocId) {
-      throw new AgentGitError(`File '${normalizedPath}' not found on branch '${branch}'`, 'FILE_NOT_FOUND');
+      throw new AgentGitError(
+        `File '${normalizedPath}' not found on branch '${branch}'`,
+        'FILE_NOT_FOUND',
+      );
     }
 
     // Sub-repos appear as "REPO:{id}"
     if (fileDocId.startsWith('REPO:')) {
-      throw new AgentGitError(`Path '${normalizedPath}' is a sub-repo, use listSubRepos to inspect.`, 'INVALID_PATH');
+      throw new AgentGitError(
+        `Path '${normalizedPath}' is a sub-repo, use listSubRepos to inspect.`,
+        'INVALID_PATH',
+      );
     }
 
     // CHECK CACHE
@@ -251,11 +262,14 @@ export class FileTree {
   async readFileAtNode(nodeId: string, path: string): Promise<FileEntry> {
     const normalizedPath = this.normalizePath(path);
     const node = await this.repo.getNode(nodeId);
-    
-    const resolvedTree = node.tree || await this.repo.resolveTree(node);
+
+    const resolvedTree = node.tree || (await this.repo.resolveTree(node));
     const fileDocId = resolvedTree[normalizedPath];
     if (!fileDocId) {
-      throw new AgentGitError(`File '${normalizedPath}' not found at node '${nodeId}'`, 'FILE_NOT_FOUND');
+      throw new AgentGitError(
+        `File '${normalizedPath}' not found at node '${nodeId}'`,
+        'FILE_NOT_FOUND',
+      );
     }
 
     // CHECK CACHE
@@ -275,9 +289,14 @@ export class FileTree {
   /**
    * Delete a file from a branch. Creates a new commit with the file removed from the tree.
    */
-  async deleteFile(branch: string, path: string, author: string, options: { message?: string } = {}): Promise<string> {
+  async deleteFile(
+    branch: string,
+    path: string,
+    author: string,
+    options: { message?: string } = {},
+  ): Promise<string> {
     const normalizedPath = this.normalizePath(path);
-    
+
     await this.checkClaim(branch, normalizedPath, author);
 
     const nodeId = this.repo.generateNodeId();
@@ -289,17 +308,20 @@ export class FileTree {
         const rootHash = currentNode?.metadata?.treeHash || null;
 
         if (!rootHash) {
-          throw new AgentGitError(`File '${normalizedPath}' not found on empty branch`, 'FILE_NOT_FOUND');
+          throw new AgentGitError(
+            `File '${normalizedPath}' not found on empty branch`,
+            'FILE_NOT_FOUND',
+          );
         }
 
         const newRootHash = await this.writeHierarchy(rootHash, normalizedPath, null);
 
         await this.repo.commitInTransaction(this.db, branch, nodeId, {}, author, message, {
-          metadata: { 
-            treeOp: 'delete', 
-            path: normalizedPath, 
+          metadata: {
+            treeOp: 'delete',
+            path: normalizedPath,
             treeHash: newRootHash,
-            isHierarchical: true 
+            isHierarchical: true,
           },
         });
       });
@@ -311,7 +333,7 @@ export class FileTree {
    * List all files on a branch, optionally filtered by a directory prefix.
    * Returns paths alongside their structural file sizes for LLM context management.
    */
-  async listFiles(branch: string, prefix?: string): Promise<{path: string, size: number}[]> {
+  async listFiles(branch: string, prefix?: string): Promise<{ path: string; size: number }[]> {
     const currentNode = await this.repo.checkout(branch);
     if (!currentNode?.tree) {
       return [];
@@ -329,8 +351,8 @@ export class FileTree {
 
     if (entries.length === 0) return [];
 
-    const result: {path: string, size: number}[] = [];
-    const missingDocs: { path: string, docId: string }[] = [];
+    const result: { path: string; size: number }[] = [];
+    const missingDocs: { path: string; docId: string }[] = [];
 
     // L1 CACHE PRE-FETCH: Resolve all sizes possible from RAM instantly
     for (const [path, docId] of entries) {
@@ -363,7 +385,12 @@ export class FileTree {
    * Register a sub-repository at a specific directory path.
    * Mirroring `git submodule add`.
    */
-  async addSubRepo(branch: string, path: string, subRepoId: string, author: string): Promise<string> {
+  async addSubRepo(
+    branch: string,
+    path: string,
+    subRepoId: string,
+    author: string,
+  ): Promise<string> {
     const normalizedPath = this.normalizePath(path);
     const nodeId = this.repo.generateNodeId();
 
@@ -372,11 +399,28 @@ export class FileTree {
         const currentNode = await this.repo.checkout(branch, { resolveTree: false });
         const rootHash = currentNode?.metadata?.treeHash || null;
 
-        const newRootHash = await this.writeHierarchy(rootHash, normalizedPath, { type: 'subrepo', hash: subRepoId });
-
-        await this.repo.commitInTransaction(this.db, branch, nodeId, {}, author, `Add sub-repo ${subRepoId} at ${normalizedPath}`, {
-          metadata: { treeOp: 'subrepo_add', path: normalizedPath, subRepoId, treeHash: newRootHash, isHierarchical: true }
+        const newRootHash = await this.writeHierarchy(rootHash, normalizedPath, {
+          type: 'subrepo',
+          hash: subRepoId,
         });
+
+        await this.repo.commitInTransaction(
+          this.db,
+          branch,
+          nodeId,
+          {},
+          author,
+          `Add sub-repo ${subRepoId} at ${normalizedPath}`,
+          {
+            metadata: {
+              treeOp: 'subrepo_add',
+              path: normalizedPath,
+              subRepoId,
+              treeHash: newRootHash,
+              isHierarchical: true,
+            },
+          },
+        );
       });
       return nodeId;
     });
@@ -388,11 +432,11 @@ export class FileTree {
   async listSubRepos(branch: string): Promise<Record<string, string>> {
     const currentNode = await this.repo.checkout(branch);
     if (!currentNode) return {};
-    
+
     // Use resolved flat tree for full listing
-    const tree = currentNode.tree || await this.repo.resolveTree(currentNode);
+    const tree = currentNode.tree || (await this.repo.resolveTree(currentNode));
     const subs: Record<string, string> = {};
-    
+
     for (const [path, id] of Object.entries(tree)) {
       if ((id as string).startsWith('REPO:')) {
         subs[path] = (id as string).replace('REPO:', '');
@@ -404,10 +448,16 @@ export class FileTree {
   /**
    * Move or rename a file atomically.
    */
-  async moveFile(branch: string, fromPath: string, toPath: string, author: string, options: { message?: string } = {}): Promise<string> {
+  async moveFile(
+    branch: string,
+    fromPath: string,
+    toPath: string,
+    author: string,
+    options: { message?: string } = {},
+  ): Promise<string> {
     const from = this.normalizePath(fromPath);
     const to = this.normalizePath(toPath);
-    
+
     await this.checkClaim(branch, from, author);
     await this.checkClaim(branch, to, author);
 
@@ -426,7 +476,10 @@ export class FileTree {
 
         // 2. Delete 'from', then write 'to'
         const intermediateHash = await this.writeHierarchy(rootHash, from, null);
-        const newRootHash = await this.writeHierarchy(intermediateHash, to, { type: 'blob', hash: blobHash });
+        const newRootHash = await this.writeHierarchy(intermediateHash, to, {
+          type: 'blob',
+          hash: blobHash,
+        });
 
         await this.repo.commitInTransaction(this.db, branch, nodeId, {}, author, message, {
           metadata: { treeOp: 'move', from, to, treeHash: newRootHash, isHierarchical: true },
@@ -439,7 +492,13 @@ export class FileTree {
   /**
    * Copy a file atomically using CAS pointers (zero storage overhead).
    */
-  async copyFile(branch: string, fromPath: string, toPath: string, author: string, options: { message?: string } = {}): Promise<string> {
+  async copyFile(
+    branch: string,
+    fromPath: string,
+    toPath: string,
+    author: string,
+    options: { message?: string } = {},
+  ): Promise<string> {
     const from = this.normalizePath(fromPath);
     const to = this.normalizePath(toPath);
 
@@ -455,7 +514,10 @@ export class FileTree {
         const blobHash = flatTree[from];
         if (!blobHash) throw new AgentGitError(`Source file '${from}' not found`, 'FILE_NOT_FOUND');
 
-        const newRootHash = await this.writeHierarchy(rootHash, to, { type: 'blob', hash: blobHash });
+        const newRootHash = await this.writeHierarchy(rootHash, to, {
+          type: 'blob',
+          hash: blobHash,
+        });
 
         await this.repo.commitInTransaction(this.db, branch, nodeId, {}, author, message, {
           metadata: { treeOp: 'copy', from, to, treeHash: newRootHash, isHierarchical: true },
@@ -474,21 +536,26 @@ export class FileTree {
    * Lists entries in a specific directory using Merkle tree traversal.
    * Perfect for lazy-loading UI components.
    */
-  async listDirectory(branch: string, path: string = ''): Promise<{ name: string; type: 'blob' | 'tree' | 'subrepo'; hash: string }[]> {
+  async listDirectory(
+    branch: string,
+    path: string = '',
+  ): Promise<{ name: string; type: 'blob' | 'tree' | 'subrepo'; hash: string }[]> {
     const normalizedPath = this.normalizePath(path);
     const node = await this.repo.checkout(branch, { resolveTree: false });
 
     if (node?.metadata?.isHierarchical && node.metadata.treeHash) {
-      const treeHash = normalizedPath === '' 
-        ? node.metadata.treeHash 
-        : await this.resolvePathToHash(node.metadata.treeHash, normalizedPath);
-      
-      if (!treeHash) throw new AgentGitError(`Directory '${normalizedPath}' not found`, 'FILE_NOT_FOUND');
-      
+      const treeHash =
+        normalizedPath === ''
+          ? node.metadata.treeHash
+          : await this.resolvePathToHash(node.metadata.treeHash, normalizedPath);
+
+      if (!treeHash)
+        throw new AgentGitError(`Directory '${normalizedPath}' not found`, 'FILE_NOT_FOUND');
+
       const entries = await this.repo.getTree(treeHash);
       return Object.entries(entries).map(([name, entry]) => ({
         name,
-        ...entry
+        ...entry,
       }));
     } else {
       // Fallback for flat trees: filter paths by prefix
@@ -496,10 +563,15 @@ export class FileTree {
         await this.repo.resolveTree(node);
       }
       const tree = node?.tree || {};
-      const prefix = normalizedPath === '' ? '' : normalizedPath.endsWith('/') ? normalizedPath : `${normalizedPath}/`;
-      
+      const prefix =
+        normalizedPath === ''
+          ? ''
+          : normalizedPath.endsWith('/')
+            ? normalizedPath
+            : `${normalizedPath}/`;
+
       const entriesMap = new Map<string, { type: 'blob' | 'tree' | 'subrepo'; hash: string }>();
-      
+
       for (const [p, hash] of Object.entries(tree)) {
         if (p.startsWith(prefix)) {
           const relative = p.slice(prefix.length);
@@ -526,7 +598,7 @@ export class FileTree {
     if (node?.metadata?.isHierarchical && node.metadata.treeHash) {
       return this.buildRecursiveHierarchy(node.metadata.treeHash);
     }
-    
+
     // Legacy fallback
     if (!node?.tree) return {};
     const tree: any = {};
@@ -559,7 +631,6 @@ export class FileTree {
     return result;
   }
 
-
   // ─── AGENTIC SWARM FILE CLAIMING ───
 
   /**
@@ -568,18 +639,21 @@ export class FileTree {
   private async checkClaim(branch: string, normalizedPath: string, author: string): Promise<void> {
     const encodedPath = encodeURIComponent(normalizedPath);
     const claim = await this.db.selectOne('claims', [
-        { column: 'repoPath', value: this.repo.getBasePath() },
-        { column: 'branch', value: branch },
-        { column: 'path', value: encodedPath }
+      { column: 'repoPath', value: this.repo.getBasePath() },
+      { column: 'branch', value: branch },
+      { column: 'path', value: encodedPath },
     ]);
-    
+
     if (claim) {
       const claimer = claim.author;
       const expiresAt = claim.expiresAt;
 
       // If claim exists and hasn't expired, and is held by someone else, throw error
       if (claimer && claimer !== author && expiresAt && expiresAt > Date.now()) {
-        throw new AgentGitError(`File '${normalizedPath}' is currently locked/claimed by agent: ${claimer}`, 'FILE_LOCKED');
+        throw new AgentGitError(
+          `File '${normalizedPath}' is currently locked/claimed by agent: ${claimer}`,
+          'FILE_LOCKED',
+        );
       }
     }
   }
@@ -594,35 +668,38 @@ export class FileTree {
 
     await this.db.runTransaction(async () => {
       const existing = await this.db.selectOne('claims', [
-          { column: 'repoPath', value: repoPath },
-          { column: 'branch', value: branch },
-          { column: 'path', value: encodedPath }
+        { column: 'repoPath', value: repoPath },
+        { column: 'branch', value: branch },
+        { column: 'path', value: encodedPath },
       ]);
 
       if (existing) {
-          const expiresAt = existing.expiresAt;
-          if (existing.author !== author && expiresAt && expiresAt > Date.now()) {
-            throw new AgentGitError(`Cannot claim '${normalizedPath}', already claimed by ${existing.author}`, 'FILE_LOCKED');
-          }
+        const expiresAt = existing.expiresAt;
+        if (existing.author !== author && expiresAt && expiresAt > Date.now()) {
+          throw new AgentGitError(
+            `Cannot claim '${normalizedPath}', already claimed by ${existing.author}`,
+            'FILE_LOCKED',
+          );
+        }
       }
 
       await this.db.push({
-          type: 'upsert',
-          table: 'claims' as any,
-          where: [
-              { column: 'repoPath', value: repoPath },
-              { column: 'branch', value: branch },
-              { column: 'path', value: encodedPath }
-          ],
-          values: {
-              repoPath,
-              branch,
-              path: encodedPath,
-              author,
-              timestamp: Date.now(),
-              expiresAt: Date.now() + FileTree.CLAIM_TTL_MS
-          },
-          layer: 'domain'
+        type: 'upsert',
+        table: 'claims' as any,
+        where: [
+          { column: 'repoPath', value: repoPath },
+          { column: 'branch', value: branch },
+          { column: 'path', value: encodedPath },
+        ],
+        values: {
+          repoPath,
+          branch,
+          path: encodedPath,
+          author,
+          timestamp: Date.now(),
+          expiresAt: Date.now() + FileTree.CLAIM_TTL_MS,
+        },
+        layer: 'domain',
       });
     });
   }
@@ -637,23 +714,26 @@ export class FileTree {
 
     await this.db.runTransaction(async () => {
       const existing = await this.db.selectOne('claims', [
-          { column: 'repoPath', value: repoPath },
-          { column: 'branch', value: branch },
-          { column: 'path', value: encodedPath }
+        { column: 'repoPath', value: repoPath },
+        { column: 'branch', value: branch },
+        { column: 'path', value: encodedPath },
       ]);
       if (existing) {
         if (existing.author !== author) {
-          throw new AgentGitError(`Cannot release '${normalizedPath}', it is owned by ${existing.author}`, 'FILE_LOCKED');
+          throw new AgentGitError(
+            `Cannot release '${normalizedPath}', it is owned by ${existing.author}`,
+            'FILE_LOCKED',
+          );
         }
         await this.db.push({
-            type: 'delete',
-            table: 'claims' as any,
-            where: [
-                { column: 'repoPath', value: repoPath },
-                { column: 'branch', value: branch },
-                { column: 'path', value: encodedPath }
-            ],
-            layer: 'domain'
+          type: 'delete',
+          table: 'claims' as any,
+          where: [
+            { column: 'repoPath', value: repoPath },
+            { column: 'branch', value: branch },
+            { column: 'path', value: encodedPath },
+          ],
+          layer: 'domain',
         });
       }
     });
@@ -664,7 +744,7 @@ export class FileTree {
    */
   private async getIgnoreRules(branch: string, headId?: string | null): Promise<AgentIgnore> {
     if (!headId) return new AgentIgnore('');
-    
+
     const cached = this.ignoreCache.get(branch);
     if (cached && cached.head === headId) {
       return cached.rules;

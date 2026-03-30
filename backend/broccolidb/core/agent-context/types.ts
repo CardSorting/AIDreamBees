@@ -1,7 +1,7 @@
-import { AiService } from '../embedding.js';
-import { LRUCache } from '../lru-cache.js';
-import { Workspace } from '../workspace.js';
-import { BufferedDbPool } from '../../infrastructure/db/BufferedDbPool.js';
+import type { BufferedDbPool } from '../../infrastructure/db/BufferedDbPool.js';
+import type { AiService } from '../embedding.js';
+import type { LRUCache } from '../lru-cache.js';
+import type { Workspace } from '../workspace.js';
 
 export interface AgentProfile {
   agentId: string;
@@ -23,13 +23,13 @@ export interface KnowledgeBaseItem {
   itemId: string;
   type: 'fact' | 'vector' | 'rule' | 'hypothesis' | 'conclusion' | 'structural_snapshot';
   content: string;
-  tags: string[];                    
-  edges: GraphEdge[];                // Outbound edges
-  inboundEdges: GraphEdge[];         // Reverse index: edges pointing AT this node
-  embedding?: number[];              // Vector embeddings
-  confidence: number;                // 0.0–1.0 confidence score
-  hubScore: number;                  // Pre-calculated centrality
-  expiresAt?: number | null; 
+  tags: string[];
+  edges: GraphEdge[]; // Outbound edges
+  inboundEdges: GraphEdge[]; // Reverse index: edges pointing AT this node
+  embedding?: number[]; // Vector embeddings
+  confidence: number; // 0.0–1.0 confidence score
+  hubScore: number; // Pre-calculated centrality
+  expiresAt?: number | null;
   metadata: Record<string, any>;
   createdAt: number;
 }
@@ -101,24 +101,35 @@ export interface ServiceContext {
     tags?: string[],
     limit?: number,
     queryEmbedding?: number[],
-    options?: { augmentWithGraph?: boolean; skipVerification?: boolean }
+    options?: { augmentWithGraph?: boolean; skipVerification?: boolean },
   ) => Promise<KnowledgeBaseItem[]>;
   updateTaskStatus: (taskId: string, status: any, result?: any) => Promise<void>;
 }
 
 export interface IAgentContext {
-	getStructuralImpact(filePath: string): { summary: string; blastRadius: any };
-	searchKnowledge(query: string, tags?: string[], limit?: number, queryEmbedding?: number[], options?: any): Promise<KnowledgeBaseItem[]>;
-	flush(): Promise<void>;
-	annotateKnowledge(targetId: string, annotation: string, agentId?: string, metadata?: Record<string, any>): Promise<void>;
+  getStructuralImpact(filePath: string): { summary: string; blastRadius: any };
+  searchKnowledge(
+    query: string,
+    tags?: string[],
+    limit?: number,
+    queryEmbedding?: number[],
+    options?: any,
+  ): Promise<KnowledgeBaseItem[]>;
+  flush(): Promise<void>;
+  annotateKnowledge(
+    targetId: string,
+    annotation: string,
+    agentId?: string,
+    metadata?: Record<string, any>,
+  ): Promise<void>;
 }
 
-export type SuggestionType = "fix" | "design" | "learn" | "feature"
+export type SuggestionType = 'fix' | 'design' | 'learn' | 'feature';
 
 export interface PromptSuggestion {
-	text: string
-	type: SuggestionType
-	impact?: number // 0.0 to 1.0 architectural impact
+  text: string;
+  type: SuggestionType;
+  impact?: number; // 0.0 to 1.0 architectural impact
 }
 
 export interface AgentBundle {

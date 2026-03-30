@@ -1,7 +1,7 @@
 import admin from 'firebase-admin';
-import { Repository } from './core/repository.js';
 import { FileTree } from './core/file-tree.js';
 import { TaskMutex } from './core/mutex.js';
+import { Repository } from './core/repository.js';
 
 async function runVerification() {
   console.log('🚀 Starting FileTree Verification...');
@@ -13,7 +13,7 @@ async function runVerification() {
     });
   }
   const db = admin.firestore();
-  
+
   // Use a unique repo for this test run
   const repoId = `repos/test-repo-${Date.now()}`;
   const repo = new Repository(db, repoId);
@@ -69,7 +69,7 @@ async function runVerification() {
     console.log('\n--- Testing listFiles ---');
     const files = await ft.listFiles(branch);
     console.log(`Found ${files.length} files.`);
-    if (files.find(f => f.path === 'src/utils/math.ts' && f.size > 0)) {
+    if (files.find((f) => f.path === 'src/utils/math.ts' && f.size > 0)) {
       console.log('✅ listFiles: Batch resolution verified.');
     } else {
       throw new Error('❌ listFiles: Size or path missing');
@@ -80,7 +80,9 @@ async function runVerification() {
     const p1 = ft.writeFile(branch, 'concurrent.txt', 'Content A', author, { message: 'A' });
     const p2 = ft.writeFile(branch, 'concurrent.txt', 'Content B', author, { message: 'B' });
     const [idA, idB] = await Promise.all([p1, p2]);
-    console.log(`Concurrent writes completed. Final head: ${idA === idB ? 'Conflict?' : 'Resolved'}`);
+    console.log(
+      `Concurrent writes completed. Final head: ${idA === idB ? 'Conflict?' : 'Resolved'}`,
+    );
     const finalNode = await repo.checkout(branch);
     console.log('Final content in tree:', finalNode?.tree?.['concurrent.txt']);
     console.log('✅ Concurrency: No overlaps/crashes detected.');

@@ -1,7 +1,7 @@
-import Database from "better-sqlite3";
-import { Kysely, SqliteDialect, CompiledQuery } from "kysely";
-import * as path from "path";
-import * as fs from "fs";
+import Database from 'better-sqlite3';
+import * as fs from 'fs';
+import { CompiledQuery, Kysely, SqliteDialect } from 'kysely';
+import * as path from 'path';
 
 export interface Schema {
   users: {
@@ -215,11 +215,11 @@ export async function getDb(): Promise<Kysely<Schema>> {
   });
 
   const execute = (q: string) => _db!.executeQuery(CompiledQuery.raw(q));
-  
+
   // Performance Tweaks (WAL Mode)
-  await execute("PRAGMA journal_mode = WAL;");
-  await execute("PRAGMA synchronous = NORMAL;");
-  await execute("PRAGMA foreign_keys = ON;");
+  await execute('PRAGMA journal_mode = WAL;');
+  await execute('PRAGMA synchronous = NORMAL;');
+  await execute('PRAGMA foreign_keys = ON;');
 
   // Schema Initialization
   await execute(`CREATE TABLE IF NOT EXISTS users (
@@ -358,7 +358,7 @@ export async function getDb(): Promise<Kysely<Schema>> {
   await execute(`CREATE INDEX IF NOT EXISTS idx_branches_repo ON branches(repoPath)`);
   await execute(`CREATE INDEX IF NOT EXISTS idx_telemetry_repo ON telemetry(repoPath)`);
   await execute(`CREATE INDEX IF NOT EXISTS idx_telemetry_task ON telemetry(taskId)`);
-  
+
   await execute(`CREATE TABLE IF NOT EXISTS agents (
     id TEXT PRIMARY KEY,
     userId TEXT NOT NULL,
@@ -402,7 +402,7 @@ export async function getDb(): Promise<Kysely<Schema>> {
     FOREIGN KEY(userId) REFERENCES users(id),
     FOREIGN KEY(agentId) REFERENCES agents(id)
   )`);
-  
+
   await execute(`CREATE TABLE IF NOT EXISTS audit_events (
     id TEXT PRIMARY KEY,
     userId TEXT NOT NULL,
@@ -430,7 +430,9 @@ export async function getDb(): Promise<Kysely<Schema>> {
   )`);
 
   await execute(`CREATE INDEX IF NOT EXISTS idx_logical_repo ON logical_constraints(repoPath)`);
-  await execute(`CREATE INDEX IF NOT EXISTS idx_logical_pattern ON logical_constraints(pathPattern)`);
+  await execute(
+    `CREATE INDEX IF NOT EXISTS idx_logical_pattern ON logical_constraints(pathPattern)`,
+  );
 
   await execute(`CREATE TABLE IF NOT EXISTS knowledge_edges (
     sourceId TEXT NOT NULL,

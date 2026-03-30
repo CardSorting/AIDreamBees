@@ -1,7 +1,7 @@
-import * as os from 'os';
-import { LRUCache } from './lru-cache.js';
-import { BufferedDbPool } from '../infrastructure/db/BufferedDbPool.js';
 import * as crypto from 'node:crypto';
+import * as os from 'os';
+import { BufferedDbPool } from '../infrastructure/db/BufferedDbPool.js';
+import { LRUCache } from './lru-cache.js';
 
 export interface EnvironmentMetadata {
   osName: string;
@@ -19,12 +19,14 @@ export class EnvironmentTracker {
       'tier-high': { input: 0.01, output: 0.03 },
       'tier-medium': { input: 0.003, output: 0.015 },
       'tier-low': { input: 0.0005, output: 0.0015 },
-      'default': { input: 0.002, output: 0.008 }
+      default: { input: 0.002, output: 0.008 },
     },
-    CACHE_SIZE: 100
+    CACHE_SIZE: 100,
   };
 
-  private static PRICING: Record<string, { input: number; output: number }> = { ...EnvironmentTracker.CONFIG.DEFAULT_PRICING };
+  private static PRICING: Record<string, { input: number; output: number }> = {
+    ...EnvironmentTracker.CONFIG.DEFAULT_PRICING,
+  };
   private static trackerCache = new LRUCache<string, any>(EnvironmentTracker.CONFIG.CACHE_SIZE);
 
   /**
@@ -45,25 +47,38 @@ export class EnvironmentTracker {
    * Configure model pricing rates.
    */
   static setPricing(modelId: string, rates: { input: number; output: number }) {
-    this.PRICING[modelId] = rates;
+    EnvironmentTracker.PRICING[modelId] = rates;
   }
 
   /**
    * Estimates cost for a given usage.
    */
-  static estimateCost(usage: { promptTokens: number; completionTokens: number; modelId?: string; pricingTier?: string }): number {
+  static estimateCost(usage: {
+    promptTokens: number;
+    completionTokens: number;
+    modelId?: string;
+    pricingTier?: string;
+  }): number {
     const tier = usage.pricingTier || usage.modelId || 'default';
-    const rates = this.PRICING[tier] || this.PRICING['default']!;
-    return (usage.promptTokens / 1000) * rates.input + (usage.completionTokens / 1000) * rates.output;
+    const rates = EnvironmentTracker.PRICING[tier] || EnvironmentTracker.PRICING['default']!;
+    return (
+      (usage.promptTokens / 1000) * rates.input + (usage.completionTokens / 1000) * rates.output
+    );
   }
 
   /**
    * Persists usage data to the repository's telemetry collection and updates O(1) aggregates.
    */
-  static async recordUsage(db: BufferedDbPool, basePath: string, agentId: string, usage: { promptTokens: number; completionTokens: number; modelId?: string }, taskId?: string | null) {
-    const cost = this.estimateCost(usage);
+  static async recordUsage(
+    db: BufferedDbPool,
+    basePath: string,
+    agentId: string,
+    usage: { promptTokens: number; completionTokens: number; modelId?: string },
+    taskId?: string | null,
+  ) {
+    const cost = EnvironmentTracker.estimateCost(usage);
     const tokens = usage.promptTokens + usage.completionTokens;
-    
+
     // 1. Detailed Audit Record
     await db.push({
       type: 'insert',
@@ -79,9 +94,9 @@ export class EnvironmentTracker {
         modelId: usage.modelId || 'default',
         cost,
         timestamp: Date.now(),
-        environment: JSON.stringify(this.capture())
+        environment: JSON.stringify(EnvironmentTracker.capture()),
       },
-      layer: 'infrastructure'
+      layer: 'infrastructure',
     });
 
     const inc = (v: number) => BufferedDbPool.increment(v);
@@ -90,30 +105,36 @@ export class EnvironmentTracker {
     await db.push({
       type: 'upsert',
       table: 'telemetry_aggregates',
-      where: [{ column: 'repoPath', value: basePath }, { column: 'id', value: 'global' }],
+      where: [
+        { column: 'repoPath', value: basePath },
+        { column: 'id', value: 'global' },
+      ],
       values: {
         repoPath: basePath,
         id: 'global',
         totalCommits: inc(1),
         totalTokens: inc(tokens),
-        totalCost: inc(cost)
+        totalCost: inc(cost),
       },
-      layer: 'infrastructure'
+      layer: 'infrastructure',
     });
 
     // 3. Agent Aggregates
     await db.push({
       type: 'upsert',
       table: 'telemetry_aggregates',
-      where: [{ column: 'repoPath', value: basePath }, { column: 'id', value: `agent_${agentId}` }],
+      where: [
+        { column: 'repoPath', value: basePath },
+        { column: 'id', value: `agent_${agentId}` },
+      ],
       values: {
         repoPath: basePath,
         id: `agent_${agentId}`,
         totalCommits: inc(1),
         totalTokens: inc(tokens),
-        totalCost: inc(cost)
+        totalCost: inc(cost),
       },
-      layer: 'infrastructure'
+      layer: 'infrastructure',
     });
 
     // 4. Task Aggregates
@@ -121,40 +142,48 @@ export class EnvironmentTracker {
       await db.push({
         type: 'upsert',
         table: 'telemetry_aggregates',
-        where: [{ column: 'repoPath', value: basePath }, { column: 'id', value: `task_${taskId}` }],
+        where: [
+          { column: 'repoPath', value: basePath },
+          { column: 'id', value: `task_${taskId}` },
+        ],
         values: {
           repoPath: basePath,
           id: `task_${taskId}`,
           totalCommits: inc(1),
           totalTokens: inc(tokens),
-          totalCost: inc(cost)
+          totalCost: inc(cost),
         },
-        layer: 'infrastructure'
+        layer: 'infrastructure',
       });
     }
 
     // Invalidate caches
-    this.trackerCache.delete('global');
-    this.trackerCache.delete(`agent_${agentId}`);
-    if (taskId) this.trackerCache.delete(`task_${taskId}`);
+    EnvironmentTracker.trackerCache.delete('global');
+    EnvironmentTracker.trackerCache.delete(`agent_${agentId}`);
+    if (taskId) EnvironmentTracker.trackerCache.delete(`task_${taskId}`);
   }
 
   /**
    * Retrieves aggregate telemetry stats.
    * Optimized to read from pre-computed aggregate documents (O(1)).
    */
-  static async getStats(db: BufferedDbPool, basePath: string, agentId?: string, taskId?: string): Promise<{ totalCommits: number; totalTokens: number; totalCost: number }> {
+  static async getStats(
+    db: BufferedDbPool,
+    basePath: string,
+    agentId?: string,
+    taskId?: string,
+  ): Promise<{ totalCommits: number; totalTokens: number; totalCost: number }> {
     let docId = 'global';
-    
+
     if (taskId) docId = `task_${taskId}`;
     else if (agentId) docId = `agent_${agentId}`;
 
-    const cached = this.trackerCache.get(docId);
+    const cached = EnvironmentTracker.trackerCache.get(docId);
     if (cached) return cached;
 
     const row = await db.selectOne('telemetry_aggregates', [
       { column: 'repoPath', value: basePath },
-      { column: 'id', value: docId }
+      { column: 'id', value: docId },
     ]);
 
     if (!row) {
@@ -164,15 +193,20 @@ export class EnvironmentTracker {
     const statsObj = {
       totalCommits: row.totalCommits || 0,
       totalTokens: row.totalTokens || 0,
-      totalCost: row.totalCost || 0
+      totalCost: row.totalCost || 0,
     };
-    this.trackerCache.set(docId, statsObj);
+    EnvironmentTracker.trackerCache.set(docId, statsObj);
     return statsObj;
   }
 
-  static getReport(stats: { totalCommits: number; totalTokens: number; totalCost: number }): string {
-    const efficiency = stats.totalCommits > 0 ? (stats.totalTokens / stats.totalCommits).toFixed(0) : '0';
-    
+  static getReport(stats: {
+    totalCommits: number;
+    totalTokens: number;
+    totalCost: number;
+  }): string {
+    const efficiency =
+      stats.totalCommits > 0 ? (stats.totalTokens / stats.totalCommits).toFixed(0) : '0';
+
     return `
 === AgentGit Usage Report ===
 Total Commits:  ${stats.totalCommits}
@@ -183,8 +217,6 @@ Avg Tokens/Commit: ${efficiency}
 =============================
     `.trim();
   }
-
-
 }
 
 export interface TelemetryPayload {
@@ -195,17 +227,17 @@ export interface TelemetryPayload {
 
 /**
  * Background queue for async telemetry offloading to ensure commit hot-path remains unblocked.
- * 
+ *
  * Batches telemetry requests and periodically persists them to Firestore.
  */
 export class AsyncTelemetryQueue {
   private queue: Array<{ payload: TelemetryPayload; db: BufferedDbPool; basePath: string }> = [];
   private flushTimer: ReturnType<typeof setTimeout> | null = null;
   private isFlushing = false;
-  
+
   constructor(
     private maxBatchSize: number = 10,
-    private flushIntervalMs: number = 2000
+    private flushIntervalMs: number = 2000,
   ) {}
 
   enqueue(db: BufferedDbPool, basePath: string, payload: TelemetryPayload) {
@@ -227,13 +259,19 @@ export class AsyncTelemetryQueue {
     }
 
     const batchToProcess = this.queue.splice(0, this.maxBatchSize);
-    
+
     try {
       // Process in parallel using Promise.allSettled
       await Promise.allSettled(
-        batchToProcess.map(({ payload, db, basePath }) => 
-          EnvironmentTracker.recordUsage(db, basePath, payload.agentId, payload.usage, payload.taskId)
-        )
+        batchToProcess.map(({ payload, db, basePath }) =>
+          EnvironmentTracker.recordUsage(
+            db,
+            basePath,
+            payload.agentId,
+            payload.usage,
+            payload.taskId,
+          ),
+        ),
       );
     } catch (err) {
       console.error('[AsyncTelemetryQueue] Batch flush failed:', err);
@@ -245,14 +283,14 @@ export class AsyncTelemetryQueue {
       }
     }
   }
-  
+
   /**
    * Immediately drains all items in the queue.
    */
   async drain(): Promise<void> {
     while (this.queue.length > 0 || this.isFlushing) {
       if (this.isFlushing) {
-        await new Promise(r => setTimeout(r, 50));
+        await new Promise((r) => setTimeout(r, 50));
       } else {
         await this.flush();
       }
@@ -262,7 +300,7 @@ export class AsyncTelemetryQueue {
   get stats() {
     return {
       pending: this.queue.length,
-      isFlushing: this.isFlushing
+      isFlushing: this.isFlushing,
     };
   }
 }
