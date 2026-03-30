@@ -64,6 +64,15 @@ app.post('/broadcasting/auth', (req, res) => {
   res.send(auth);
 });
 
+app.get('/', (req, res) => {
+  res.json({
+    status: "online",
+    service: "Nano Banana 2 Backend",
+    substrate: "BroccoliDB",
+    version: "2.1.0"
+  });
+});
+
 // --- Persistent History API (BroccoliDB Backend) ---
 app.get('/api/history', async (req, res) => {
   try {
