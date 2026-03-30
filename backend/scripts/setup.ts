@@ -8,8 +8,19 @@ async function setup() {
   const envPath = path.resolve(process.cwd(), '.env');
   const envExamplePath = path.resolve(process.cwd(), '.env.example');
 
-  console.log('\n🌟 Welcome to the AIDreamBees Onboarding Tool! 🌟');
-  console.log('--------------------------------------------\n');
+  const asciiArt = `
+\x1b[36m   _____                             ____                      _     _____ 
+  |  __ \\                           |  _ \\                    / \\   |_   _|
+  | |  | | _ __  ___   __ _  _ __ ___ | |_) |  ___   ___  ___   / _ \\    | |  
+  | |  | || '__|/ _ \\ / _\` || '_ \` _ \\|  _ <  / _ \\ / _ \\/ __| / ___ \\   | |  
+  | |__| || |  |  __/| (_| || | | | | || |_) ||  __/|  __/\\__ \\/ /   \\ \\ _| |_ 
+  |_____/ |_|   \\___| \\__,_||_| |_| |_||____/  \\___| \\___||___/_/     \\_\\_____|
+\x1b[0m`;
+
+  console.log(asciiArt);
+  console.log('\x1b[33m%s\x1b[0m', '🌟 Welcome to the DreamBeesAI Onboarding Tool! 🌟');
+  console.log('\x1b[33m%s\x1b[0m', '------------------------------------------------');
+  console.log('\x1b[90m%s\x1b[0m', 'Building the future of AI orchestration...\n');
 
   if (!fs.existsSync(envExamplePath)) {
     console.error('❌ .env.example file not found. Please ensure you are running this from the backend directory.');
@@ -37,9 +48,9 @@ async function setup() {
 
     // Interactive skipping with help
     if (key === 'DISCORD_TOKEN') {
-      const skip = await rl.question('Do you want to set up Discord? (y/n, or type "help"): ');
+      const skip = await rl.question('\x1b[35mDo you want to set up Discord? (y/n, or type "help"): \x1b[0m');
       if (skip.toLowerCase() === 'help') {
-        console.log('\n🎮 DISCORD SETUP WALKTHROUGH:');
+        console.log('\n\x1b[35m🎮 DISCORD SETUP WALKTHROUGH:\x1b[0m');
         console.log('1. Go to the Discord Developer Portal: https://discord.com/developers/applications');
         console.log('2. Create a "New Application".');
         console.log('3. Go to "Bot" settings, reset/copy your "Token".');
@@ -52,9 +63,9 @@ async function setup() {
     }
 
     if (key === 'TELEGRAM_BOT_TOKEN') {
-      const skip = await rl.question('Do you want to set up Telegram? (y/n, or type "help"): ');
+      const skip = await rl.question('\x1b[34mDo you want to set up Telegram? (y/n, or type "help"): \x1b[0m');
       if (skip.toLowerCase() === 'help') {
-        console.log('\n📱 TELEGRAM SETUP WALKTHROUGH:');
+        console.log('\n\x1b[34m📱 TELEGRAM SETUP WALKTHROUGH:\x1b[0m');
         console.log('1. Open Telegram and search for "@BotFather".');
         console.log('2. Send "/newbot" and follow the prompts to name your bot.');
         console.log('3. Copy the "HTTP API token" provided at the end.\n');
@@ -78,9 +89,9 @@ async function setup() {
 
     let answer = '';
     if (key === 'GEMINI_API_KEY') {
-      const help = await rl.question(`Enter value for ${key} (or type "help"): `);
+      const help = await rl.question(`\x1b[32mEnter value for ${key} (or type "help"): \x1b[0m`);
       if (help.toLowerCase() === 'help') {
-        console.log('\n📖 GEMINI API KEY WALKTHROUGH:');
+        console.log('\n\x1b[32m📖 GEMINI API KEY WALKTHROUGH:\x1b[0m');
         console.log('1. Go to https://aistudio.google.com/');
         console.log('2. Click on "Get API key" in the sidebar.');
         console.log('3. Create a new API key in a new or existing project.');
@@ -90,9 +101,9 @@ async function setup() {
         answer = help;
       }
     } else if (key === 'SOKETI_APP_ID' || key === 'SOKETI_APP_KEY' || key === 'SOKETI_APP_SECRET') {
-      const help = await rl.question(`Enter value for ${key} (default: ${defaultValue}, or type "help"): `);
+      const help = await rl.question(`\x1b[36mEnter value for ${key} (default: ${defaultValue}, or type "help"): \x1b[0m`);
       if (help.toLowerCase() === 'help') {
-        console.log('\n📡 SOKETI CONFIGURATION GUIDE:');
+        console.log('\n\x1b[36m📡 SOKETI CONFIGURATION GUIDE:\x1b[0m');
         console.log('Soketi is a self-hosted WebSocket server. You can use any values for local development.');
         console.log('Defaults are recommended for local setup:');
         console.log('- ID: app-id');
@@ -109,13 +120,13 @@ async function setup() {
   }
 
   fs.writeFileSync(envPath, newEnv.join('\n'));
-  console.log('\n✅ .env file has been successfully created!');
+  console.log('\n\x1b[32m✅ .env file has been successfully created!\x1b[0m');
 
-  const launchAll = await rl.question('\n🚀 Do you want to launch EVERYTHING now? (Backend, Soketi, Frontend) (y/n, default: y): ');
+  const launchAll = await rl.question('\n\x1b[33m🚀 Do you want to launch EVERYTHING now? (Backend, Soketi, Frontend) (y/n, default: y): \x1b[0m');
   const shouldLaunchAll = launchAll.toLowerCase() !== 'n';
 
   if (shouldLaunchAll) {
-    console.log('\n📦 Installing all dependencies first...');
+    console.log('\n\x1b[90m📦 Installing all dependencies first...\x1b[0m');
     const { execSync, spawn } = await import('node:child_process');
     try {
       console.log('🔹 Backend dependencies...');
@@ -123,36 +134,36 @@ async function setup() {
       console.log('🔹 Frontend dependencies...');
       execSync('cd ../frontend && npm install', { stdio: 'inherit' });
 
-      console.log('\n🚀 Launching services in parallel...');
+      console.log('\n\x1b[33m🚀 Launching services in parallel...\x1b[0m');
 
       // Launch Soketi
-      console.log('📡 Starting Soketi...');
+      console.log('\x1b[36m📡 Starting Soketi...\x1b[0m');
       spawn('bash', ['../start-soketi.sh'], { stdio: 'inherit', shell: true });
 
       // Launch Backend (wait a second for Soketi)
       setTimeout(() => {
-        console.log('⚙️ Starting Backend...');
+        console.log('\x1b[32m⚙️ Starting Backend...\x1b[0m');
         spawn('npm', ['start'], { stdio: 'inherit', shell: true });
       }, 1000);
 
       // Launch Frontend
       setTimeout(() => {
-        console.log('🎨 Starting Frontend...');
+        console.log('\x1b[34m🎨 Starting Frontend...\x1b[0m');
         spawn('npm', ['run', 'dev'], { stdio: 'inherit', shell: true, cwd: '../frontend' });
       }, 2000);
 
-      console.log('\n🌟 All services are booting up! Check the logs above.');
+      console.log('\n\x1b[32m🌟 All services are booting up! Check the logs above.\x1b[0m');
     } catch (err) {
-      console.error('❌ Error during automated launch:', err);
+      console.error('\x1b[31m❌ Error during automated launch:\x1b[0m', err);
     }
   } else {
-    console.log('\n👍 Setup complete! You can start services manually when ready.');
+    console.log('\n\x1b[32m👍 Setup complete! You can start services manually when ready.\x1b[0m');
   }
 
   rl.close();
 }
 
 setup().catch((err) => {
-  console.error('❌ An error occurred during setup:', err);
+  console.error('\x1b[31m❌ An error occurred during setup:\x1b[0m', err);
   process.exit(1);
 });
