@@ -647,3 +647,71 @@ textarea {
   margin-left: auto; border: none; color: inherit; cursor: pointer;
   padding: 4px; border-radius: 4px; background: rgba(255,255,255,0.1);
 }
+
+/* --- Heartbeat & Last Uplink (Pass 2) --- */
+.heartbeat-monitor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 16px;
+  padding: 8px;
+  background: rgba(0, 0, 0, 0.2);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.05);
+}
+
+.heartbeat-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+}
+
+.heartbeat-dot.healthy { background: #10b981; box-shadow: 0 0 5px #10b981; }
+.heartbeat-dot.warning { background: #f59e0b; box-shadow: 0 0 5px #f59e0b; }
+.heartbeat-dot.critical { background: #ef4444; box-shadow: 0 0 5px #ef4444; }
+
+.heartbeat-label {
+  font-size: 0.65rem;
+  color: rgba(255, 255, 255, 0.5);
+  font-family: var(--font-mono);
+  letter-spacing: 0.05em;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+.spinning {
+  animation: spin 2s linear infinite;
+}
+
+.sync-dot.error {
+  background: #ef4444;
+  box-shadow: 0 0 10px #ef4444;
+}
+
+.nav-item.button-like {
+  background: transparent;
+  width: 100%;
+  text-align: left;
+  border: none;
+  cursor: pointer;
+  padding: 10px 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  color: var(--text-secondary);
+  border-radius: 8px;
+  transition: all 0.2s;
+}
+
+.nav-item.button-like:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: #fff;
+}
+
+/* Tooltip for soundness markers */
+[title] {
+  cursor: help;
+}

@@ -1,7 +1,7 @@
 export const API_BASE_URL = 'http://localhost:3001';
 
-export const PUSHER_CONFIG = {
-  key: 'app-key',
+export const SOKETI_CONFIG = {
+  appKey: 'app-key',
   cluster: 'mt1',
   host: '127.0.0.1',
   port: 6001,

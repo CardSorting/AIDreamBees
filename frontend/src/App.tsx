@@ -13,13 +13,12 @@ import {
   ShieldCheck,
   Trash2,
   X,
-  Zap,
 } from 'lucide-react';
 import Pusher from 'pusher-js';
-import type React from 'react';
-import { useEffect, useRef, useState } from 'react';
+import React, { Component, type ErrorInfo, type ReactNode, useCallback, useEffect, useRef, useState } from 'react';
 import SettingsModal from './components/settings/SettingsModal';
-import { API_BASE_URL, PUSHER_CONFIG, UI_FEATURES } from './config';
+import { API_BASE_URL, SOKETI_CONFIG, UI_FEATURES } from './config';
+import { loadMessagesLocal, saveMessagesLocal } from './utils/persistence';
 
 interface Message {
   id: string;
@@ -59,6 +58,35 @@ interface BotMessageData {
   isGrounded?: boolean;
 }
 
+// --- Error Boundary for Cognitive Safety (Pass 3) ---
+class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boolean }> {
+  constructor(props: { children: ReactNode }) {
+    super(props);
+    this.state = { hasError: false };
+  }
+
+  static getDerivedStateFromError() {
+    return { hasError: true };
+  }
+
+  componentDidCatch(error: Error, errorInfo: ErrorInfo) {
+    console.error('Cognitive Render Crash:', error, errorInfo);
+  }
+
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div className="error-fallback">
+          <h3>Neural Rendering Halted</h3>
+          <p>A cognitive anomaly was detected in the stream.</p>
+          <button type="button" onClick={() => window.location.reload()}>Re-initialize Uplink</button>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 const App = () => {
   // --- Data Fetching & Sync ---
   const [messages, setMessages] = useState<Message[]>([]);
@@ -69,12 +97,18 @@ const App = () => {
   const [connectionStatus, setConnectionStatus] = useState('connecting');
   const [errorStatus, setErrorStatus] = useState<string | null>(null);
   const [isHistoryLoading, setIsHistoryLoading] = useState(true);
-  const [systemHealth, setSystemHealth] = useState<SystemHealth>({
+  const [systemHealth, setSystemHealth] = useState<SystemHealth & { lastSync?: number }>({
     entropy: 0.1,
     health: 'Initializing...',
     violations: 0,
     nodeCount: 0,
+    substrateStability: 0.99,
   });
+  
+  const lastSequenceIdRef = useRef<number>(0);
+  const pollingIntervalRef = useRef<any>(null);
+  const [heartbeat, setHeartbeat] = useState<{ status: 'healthy' | 'warning' | 'critical', latency?: number, isPolling?: boolean }>({ status: 'healthy' });
+  const [relativeSyncTime, setRelativeSyncTime] = useState('just now');
   const [gridMode, setGridMode] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
@@ -82,49 +116,66 @@ const App = () => {
   const pusherRef = useRef<Pusher | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // --- Initial Bootstrap ---
-  useEffect(() => {
-    const bootstrap = async () => {
-      try {
-        const [histRes, healthRes] = await Promise.all([
-          fetch(`${API_BASE_URL}/api/history`),
-          fetch(`${API_BASE_URL}/api/health`),
-        ]);
-
-        if (histRes.ok) {
-          const data = await histRes.json();
-          if (data.length > 0) {
-            setMessages(data);
-          } else {
-            setMessages([
-              {
-                id: 'init-1',
-                user: 'DreamBeesAI',
-                message: 'Hive Managed Substrate Online. Awaiting neural synchronization.',
-                type: 'bot',
-                timestamp: new Date().toISOString(),
-                images: [],
-                soundness: 1.0,
-                isGrounded: true,
-              },
-            ]);
-          }
+  const bootstrap = useCallback(async (isReconnect = false) => {
+    try {
+      if (!isReconnect && messages.length === 0) {
+        setIsHistoryLoading(true);
+        // Warm Start Logic (Pass 3)
+        const localHistory = await loadMessagesLocal();
+        if (localHistory.length > 0) {
+          setMessages(localHistory as Message[]);
+          setIsHistoryLoading(false);
         }
+      }
+      
+      const [histRes, healthRes] = await Promise.all([
+        fetch(`${API_BASE_URL}/api/history`),
+        fetch(`${API_BASE_URL}/api/health`),
+      ]);
 
-        if (healthRes.ok) {
-          const health = await healthRes.json();
-          setSystemHealth(health);
+      if (histRes.ok) {
+        const data = await histRes.json();
+        if (data.length > 0) {
+          setMessages(data);
+          saveMessagesLocal(data); // Persist update
+        } else if (!isReconnect && messages.length === 0) {
+          setMessages([
+            {
+              id: 'init-1',
+              user: 'DreamBeesAI',
+              message: 'Hive Managed Substrate Online. Awaiting neural synchronization.',
+              type: 'bot',
+              timestamp: new Date().toISOString(),
+              images: [],
+              soundness: 1.0,
+              isGrounded: true,
+            },
+          ]);
         }
-      } catch (err) {
-        console.error('Bootstrap error:', err);
-        setErrorStatus('Hive synchronization failure. Retrying connection...');
-      } finally {
+      }
+
+      if (healthRes.ok) {
+        const health = await healthRes.json();
+        setSystemHealth(prev => ({ ...prev, ...health, lastSync: Date.now() }));
+      }
+      setErrorStatus(null);
+    } catch (err) {
+      console.error('Bootstrap error:', err);
+      setErrorStatus('Hive synchronization failure. Retrying connection...');
+      if (!isReconnect) {
+        setTimeout(() => bootstrap(), 5000);
+      }
+    } finally {
+      if (!isReconnect) {
         setTimeout(() => setIsHistoryLoading(false), 800);
       }
-    };
+    }
+  }, [messages.length]);
 
+  // --- Initial Bootstrap ---
+  useEffect(() => {
     bootstrap();
-  }, []);
+  }, [bootstrap]);
 
   useEffect(() => {
     if (messages.length || isThinking) {
@@ -132,13 +183,25 @@ const App = () => {
     }
   }, [messages, isThinking]);
 
-  // --- Pusher Initialization ---
+  // Relative Sync Timer (Pass 3)
   useEffect(() => {
-    const pusher = new Pusher(PUSHER_CONFIG.key, {
-      wsHost: PUSHER_CONFIG.host,
-      wsPort: PUSHER_CONFIG.port,
-      forceTLS: PUSHER_CONFIG.useTLS,
-      cluster: PUSHER_CONFIG.cluster,
+    const timer = setInterval(() => {
+      if (!systemHealth.lastSync) return;
+      const seconds = Math.floor((Date.now() - systemHealth.lastSync) / 1000);
+      if (seconds < 5) setRelativeSyncTime('just now');
+      else if (seconds < 60) setRelativeSyncTime(`${seconds}s ago`);
+      else setRelativeSyncTime(`${Math.floor(seconds / 60)}m ago`);
+    }, 1000);
+    return () => clearInterval(timer);
+  }, [systemHealth.lastSync]);
+
+  // --- Soketi Initialization ---
+  useEffect(() => {
+    const pusher = new Pusher(SOKETI_CONFIG.appKey, {
+      wsHost: SOKETI_CONFIG.host,
+      wsPort: SOKETI_CONFIG.port,
+      forceTLS: SOKETI_CONFIG.useTLS,
+      cluster: SOKETI_CONFIG.cluster,
       disableStats: true,
       enabledTransports: ['ws', 'wss'],
       authEndpoint: `${API_BASE_URL}/broadcasting/auth`,
@@ -146,54 +209,109 @@ const App = () => {
 
     pusher.connection.bind('state_change', (states: { current: string }) => {
       setConnectionStatus(states.current);
+      if (states.current === 'connected') {
+        console.log('Soketi: Uplink Synchronized.');
+        bootstrap(true);
+        setHeartbeat({ status: 'healthy', latency: 0, isPolling: false });
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
+      }
+      if (states.current === 'unavailable' || states.current === 'failed') {
+        setErrorStatus('Bridge connection lost. Initializing long-polling fallback...');
+        setHeartbeat({ status: 'critical', isPolling: true });
+        
+        // Long-Polling Fallback (Pass 3)
+        if (!pollingIntervalRef.current) {
+          pollingIntervalRef.current = setInterval(() => {
+            console.log('[FALLBACK] Polling substrate history...');
+            bootstrap(true);
+          }, 10000);
+        }
+      }
     });
 
     const channel = pusher.subscribe('presence-chat');
     pusherRef.current = pusher;
 
-    channel.bind('bot-message', (data: BotMessageData) => {
-      setMessages((prev) => [
-        ...prev,
-        {
-          id: Date.now().toString(),
-          user: data.user,
-          message: data.message,
-          type: 'bot',
-          timestamp: new Date().toISOString(),
-          images: data.images || [],
-          sourceImages: data.sourceImages || [],
-          soundness: data.soundness || 0.95,
-          isGrounded: data.isGrounded || true,
-        },
-      ]);
+    const handleSequence = (incomingSeq: number) => {
+      if (lastSequenceIdRef.current > 0 && incomingSeq > lastSequenceIdRef.current + 1) {
+        console.warn(`[SYNC GAP] Detected sequence jump: ${lastSequenceIdRef.current} -> ${incomingSeq}. Triggering full re-sync.`);
+        bootstrap(true);
+      }
+      lastSequenceIdRef.current = incomingSeq;
+      setSystemHealth(prev => ({ ...prev, lastSync: Date.now() }));
+    };
+
+    channel.bind('bot-message', (data: BotMessageData & { sequenceId: number }) => {
+      try {
+        if (data.sequenceId) handleSequence(data.sequenceId);
+        setMessages((prev) => {
+          const newMessages: Message[] = [
+            ...prev,
+            {
+              id: Date.now().toString(),
+              user: data.user,
+              message: data.message,
+              type: 'bot',
+              timestamp: new Date().toISOString(),
+              images: data.images || [],
+              sourceImages: data.sourceImages || [],
+              soundness: data.soundness || 0.95,
+              isGrounded: data.isGrounded || true,
+            },
+          ];
+          saveMessagesLocal(newMessages); 
+          return newMessages;
+        });
+      } catch (e) {
+        console.error('Failed to process bot-message:', e);
+      }
     });
 
-    channel.bind('substrate-suggestions', (data: { suggestions: Suggestion[] }) => {
-      setMessages((prev) => {
-        const lastBot = [...prev].reverse().find((m) => m.type === 'bot');
-        if (lastBot) {
-          return prev.map((m) =>
-            m.id === lastBot.id ? { ...m, suggestions: data.suggestions } : m,
-          );
-        }
-        return prev;
-      });
+    channel.bind('substrate-suggestions', (data: { suggestions: Suggestion[], sequenceId?: number }) => {
+      try {
+        if (data.sequenceId) handleSequence(data.sequenceId);
+        setMessages((prev) => {
+          const lastBot = [...prev].reverse().find((m) => m.type === 'bot');
+          if (lastBot) {
+            return prev.map((m) =>
+              m.id === lastBot.id ? { ...m, suggestions: data.suggestions } : m,
+            );
+          }
+          return prev;
+        });
+      } catch (e) {
+        console.error('Failed to process substrate-suggestions:', e);
+      }
     });
 
-    channel.bind('system-update', (data: { health: SystemHealth }) => {
-      setSystemHealth(data.health);
+    channel.bind('system-update', (data: { health: SystemHealth, sequenceId: number }) => {
+      try {
+        if (data.sequenceId) handleSequence(data.sequenceId);
+        setSystemHealth(prev => ({ ...prev, ...data.health }));
+      } catch (e) {
+        console.error('Failed to process system-update:', e);
+      }
     });
 
-    channel.bind('bot-thinking', (data: { isThinking: boolean }) => {
-      setIsThinking(data.isThinking);
+    channel.bind('bot-thinking', (data: { isThinking: boolean, sequenceId?: number }) => {
+      try {
+        if (data.sequenceId) handleSequence(data.sequenceId);
+        setIsThinking(data.isThinking);
+      } catch (e) {
+        console.error('Failed to process bot-thinking:', e);
+      }
     });
 
     return () => {
+      if (pollingIntervalRef.current) clearInterval(pollingIntervalRef.current);
       channel.unbind_all();
       pusher.unsubscribe('presence-chat');
       pusher.disconnect();
     };
-  }, []);
+  }, [bootstrap]);
 
   const handleSendMessage = async () => {
     if ((!inputValue.trim() && !selectedImage) || connectionStatus !== 'connected') return;
@@ -276,9 +394,9 @@ const App = () => {
 
         <nav className="sidebar-nav">
           <div className="nav-group-label">OPERATIONS</div>
-          <button type="button" className="nav-item active">
-            <Zap size={18} />
-            <span>Neural Sync</span>
+          <button type="button" className="nav-item button-like" onClick={() => bootstrap(true)}>
+            <RefreshCw size={18} className={connectionStatus !== 'connected' ? 'spinning' : ''} />
+            <span>Neural Re-sync</span>
           </button>
           <button type="button" className="nav-item button-like" onClick={clearChat}>
             <Trash2 size={18} />
@@ -332,6 +450,15 @@ const App = () => {
                       : 'N/A'}
                   </span>
                 </div>
+                <div className="monitor-cell">
+                  <span className="cell-label">LAST UPLINK</span>
+                  <span className="cell-value">{relativeSyncTime}</span>
+                </div>
+              </div>
+              
+              <div className="heartbeat-monitor">
+                <div className={`heartbeat-dot ${heartbeat.status}`} />
+                <span className="heartbeat-label">Substrate Heartbeat: {heartbeat.status.toUpperCase()}</span>
               </div>
               <div className="health-bar-container">
                 <motion.div 
@@ -357,9 +484,13 @@ const App = () => {
               {isSidebarOpen ? <X size={20} /> : <Bee size={22} />}
             </button>
             <div className="sync-badge">
-              <div className={`sync-dot ${connectionStatus === 'connected' ? 'synced' : 'pulsing'}`} />
+              <div className={`sync-dot ${connectionStatus === 'connected' ? 'synced' : connectionStatus === 'unavailable' || connectionStatus === 'failed' ? 'error' : 'pulsing'}`} />
               <span className="sync-text">
-                {connectionStatus === 'connected' ? 'UPLINK ESTABLISHED' : 'SYNCING HIVE...'}
+                {connectionStatus === 'connected' 
+                  ? 'UPLINK ESTABLISHED' 
+                  : connectionStatus === 'unavailable' || connectionStatus === 'failed'
+                  ? 'UPLINK SEVERED'
+                  : 'SYNCING HIVE...'}
               </span>
             </div>
           </div>
@@ -372,109 +503,111 @@ const App = () => {
 
         <div className="chat-container">
           <div className="messages-flow">
-            {isHistoryLoading ? (
-              <div className="loading-skeleton">
-                {[1, 2, 3].map((i) => (
-                  <div key={`skeleton-${i}`} className="skeleton-msg">
-                    <div className="skeleton-meta" />
-                    <div className="skeleton-bubble" />
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <AnimatePresence initial={false}>
-                {messages.map((msg) => (
-                  <motion.div
-                    key={msg.id}
-                    initial={{ opacity: 0, y: 20 }}
-                    animate={{ opacity: 1, y: 0 }}
-                    transition={{ duration: 0.4, ease: "easeOut" }}
-                    className={`message-row ${msg.type}`}
-                  >
-                    <div className="message-envelope">
-                      <div className="message-header">
-                        <div className="sender-info">
-                          {msg.type === 'bot' ? <Bee size={14} className="bot-icon" /> : null}
-                          <span className="sender-name">{msg.type === 'bot' ? 'HIVE LOGIC' : 'NEURAL UPLINK'}</span>
-                          <span className="timestamp">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
-                        </div>
-                        {msg.type === 'bot' && UI_FEATURES.SOUNDNESS_BADGES_ENABLED && (
-                          <div className="audit-badges">
-                            {msg.isGrounded && (
-                              <div className="badge grounded" title="Grounding verified via substrate">
-                                <Database size={10} />
-                                <span>GROUNDED</span>
-                              </div>
-                            )}
-                            <div className="badge soundness" title="Cognitive reliability score">
-                              <ShieldCheck size={10} />
-                              <span>{((msg.soundness || 0.95) * 100).toFixed(0)}% SOUND</span>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-                      <div className="message-bubble">
-                        {msg.message}
-                        
-                        {msg.images && msg.images.length > 0 && (
-                          <div className="image-grid-refined">
-                            {msg.images.map((img, idx) => (
-                              <div key={`${msg.id}-img-${img.substring(0, 32)}`} className="image-frame">
-                                <button
-                                  type="button"
-                                  className="image-btn-wrapper"
-                                  onClick={() => window.open(img.startsWith('data:') ? img : `data:image/png;base64,${img}`, '_blank')}
-                                >
-                                  <img 
-                                    src={img.startsWith('data:') ? img : `data:image/png;base64,${img}`} 
-                                    alt="Cognitive Synthesis" 
-                                  />
-                                </button>
-                                {msg.sourceImages && msg.sourceImages.length > 1 && (
-                                  <div className="image-meta-overlay">
-                                    <span className="multiplex-tag">COMB #{idx + 1}</span>
-                                    <button type="button" className="expand-btn" onClick={() => window.open(img, '_blank')}>
-                                      <ExternalLink size={12} />
-                                    </button>
-                                  </div>
-                                )}
-                              </div>
-                            ))}
-                          </div>
-                        )}
-
-                        {msg.suggestions && (
-                          <div className="suggestion-uplink">
-                            {msg.suggestions.map((s) => (
-                              <button key={s.id} type="button" className="suggestion-tag" onClick={() => setInputValue(s.action)}>
-                                {s.label}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                      </div>
+            <ErrorBoundary>
+              {isHistoryLoading ? (
+                <div className="loading-skeleton">
+                  {[1, 2, 3].map((i) => (
+                    <div key={`skeleton-${i}`} className="skeleton-msg">
+                      <div className="skeleton-meta" />
+                      <div className="skeleton-bubble" />
                     </div>
-                  </motion.div>
-                ))}
-              </AnimatePresence>
-            )}
-
-            {isThinking && (
-              <motion.div 
-                initial={{ opacity: 0 }} 
-                animate={{ opacity: 1 }} 
-                className="message-row bot"
-              >
-                <div className="thinking-resonance">
-                  <div className="resonance-waves">
-                    <div className="wave" />
-                    <div className="wave delay-1" />
-                    <div className="wave delay-2" />
-                  </div>
-                  <span>Resonating with Substrate...</span>
+                  ))}
                 </div>
-              </motion.div>
-            )}
+              ) : (
+                <AnimatePresence initial={false}>
+                  {messages.map((msg) => (
+                    <motion.div
+                      key={msg.id}
+                      initial={{ opacity: 0, y: 20 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      transition={{ duration: 0.4, ease: "easeOut" }}
+                      className={`message-row ${msg.type}`}
+                    >
+                      <div className="message-envelope">
+                        <div className="message-header">
+                          <div className="sender-info">
+                            {msg.type === 'bot' ? <Bee size={14} className="bot-icon" /> : null}
+                            <span className="sender-name">{msg.type === 'bot' ? 'HIVE LOGIC' : 'NEURAL UPLINK'}</span>
+                            <span className="timestamp">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                          </div>
+                          {msg.type === 'bot' && UI_FEATURES.SOUNDNESS_BADGES_ENABLED && (
+                            <div className="audit-badges">
+                              {msg.isGrounded && (
+                                <div className="badge grounded" title="Grounding verified via substrate">
+                                  <Database size={10} />
+                                  <span>GROUNDED</span>
+                                </div>
+                              )}
+                              <div className="badge soundness" title="Cognitive reliability score">
+                                <ShieldCheck size={10} />
+                                <span>{((msg.soundness || 0.95) * 100).toFixed(0)}% SOUND</span>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                        <div className="message-bubble">
+                          {msg.message}
+                          
+                          {msg.images && msg.images.length > 0 && (
+                            <div className="image-grid-refined">
+                              {msg.images.map((img, idx) => (
+                                <div key={`${msg.id}-img-${img.substring(0, 32)}`} className="image-frame">
+                                  <button
+                                    type="button"
+                                    className="image-btn-wrapper"
+                                    onClick={() => window.open(img.startsWith('data:') ? img : `data:image/png;base64,${img}`, '_blank')}
+                                  >
+                                    <img 
+                                      src={img.startsWith('data:') ? img : `data:image/png;base64,${img}`} 
+                                      alt="Cognitive Synthesis" 
+                                    />
+                                  </button>
+                                  {msg.sourceImages && msg.sourceImages.length > 1 && (
+                                    <div className="image-meta-overlay">
+                                      <span className="multiplex-tag">COMB #{idx + 1}</span>
+                                      <button type="button" className="expand-btn" onClick={() => window.open(img, '_blank')}>
+                                        <ExternalLink size={12} />
+                                      </button>
+                                    </div>
+                                  )}
+                                </div>
+                              ))}
+                            </div>
+                          )}
+
+                          {msg.suggestions && (
+                            <div className="suggestion-uplink">
+                              {msg.suggestions.map((s) => (
+                                <button key={s.id} type="button" className="suggestion-tag" onClick={() => setInputValue(s.action)}>
+                                  {s.label}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </motion.div>
+                  ))}
+                </AnimatePresence>
+              )}
+
+              {isThinking && (
+                <motion.div 
+                  initial={{ opacity: 0 }} 
+                  animate={{ opacity: 1 }} 
+                  className="message-row bot"
+                >
+                  <div className="thinking-resonance">
+                    <div className="resonance-waves">
+                      <div className="wave" />
+                      <div className="wave delay-1" />
+                      <div className="wave delay-2" />
+                    </div>
+                    <span>Resonating with Substrate...</span>
+                  </div>
+                </motion.div>
+              )}
+            </ErrorBoundary>
             <div ref={messagesEndRef} />
           </div>
         </div>
