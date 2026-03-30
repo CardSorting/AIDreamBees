@@ -1,13 +1,15 @@
 import {
   AlertCircle,
-  Banana,
+  Bee,
   Bot,
+  Flame,
   Image as ImageIcon,
   Send,
   Settings,
   Sparkles,
   Trash2,
   X,
+  Zap,
 } from 'lucide-react';
 import Pusher from 'pusher-js';
 import type React from 'react';
@@ -85,8 +87,8 @@ const App = () => {
             setMessages([
               {
                 id: '1',
-                user: 'Nano Banana 2',
-                message: 'Cognitive substrate online. Suggestions active.',
+                user: 'DreamBeesAI',
+                message: 'Hive Mind online. Pollinating the substrate with intelligence.',
                 type: 'bot',
                 timestamp: new Date().toISOString(),
                 images: [],
@@ -259,8 +261,8 @@ const App = () => {
         setMessages([
           {
             id: '1',
-            user: 'Nano Banana 2',
-            message: 'History purged. Fresh session started.',
+            user: 'DreamBeesAI',
+            message: 'Hive history purged. A fresh colony begins.',
             type: 'bot',
             timestamp: new Date().toISOString(),
             images: [],
@@ -285,19 +287,19 @@ const App = () => {
       <aside className="sidebar">
         <div className="logo-container">
           <div className="logo-icon">
-            <Banana size={20} />
+            <Bee size={20} />
           </div>
-          <span className="logo-text">Nano Banana 2</span>
+          <span className="logo-text">DreamBeesAI</span>
         </div>
 
         <nav>
           <div className="nav-item active">
-            <Sparkles size={18} />
-            <span>Creator Mode</span>
+            <Zap size={18} />
+            <span>Hive Mode</span>
           </div>
           <button type="button" className="nav-item button-like" onClick={clearChat}>
             <Trash2 size={18} />
-            <span>Clear Substrate</span>
+            <span>Purge Hive</span>
           </button>
         </nav>
 
@@ -334,10 +336,10 @@ const App = () => {
         <header className="chat-header">
           <div className="status-badge">
             <div className={`status-dot ${connectionStatus !== 'connected' ? 'connecting' : ''}`} />
-            <span>{connectionStatus === 'connected' ? 'Substrate Online' : 'Linking...'}</span>
+            <span>{connectionStatus === 'connected' ? 'Hive Mind Online' : 'Connecting to Swarm...'}</span>
           </div>
           <div style={{ display: 'flex', gap: '12px', alignItems: 'center' }}>
-            <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>Multimodal AI Agent</span>
+            <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>Swarm-Powered AI</span>
           </div>
         </header>
 
@@ -480,7 +482,7 @@ const App = () => {
               <ImageIcon size={20} />
             </button>
             <textarea
-              placeholder="Ask Nano Banana 2 to generate or edit images..."
+              placeholder="Ask DreamBeesAI to pollinate ideas or generate visions..."
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyPress}
@@ -496,7 +498,7 @@ const App = () => {
             </button>
           </div>
           <p className="disclaimer">
-            Native Image Generation: Describe the scene, don't just list keywords.
+            Pollinating Visions: Describe your request in detail for the Hive Mind.
           </p>
         </div>
       </main>
