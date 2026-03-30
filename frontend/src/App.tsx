@@ -465,9 +465,12 @@ const App = () => {
             <div className="message-wrapper bot">
               <div className="message bot">
                 <div className="thinking-container">
-                  <div className="dot" />
-                  <div className="dot" />
-                  <div className="dot" />
+                  <span className="thinking-text">Pollinating Response</span>
+                  <div className="dots-wrapper">
+                    <div className="dot" />
+                    <div className="dot" />
+                    <div className="dot" />
+                  </div>
                 </div>
               </div>
             </div>
