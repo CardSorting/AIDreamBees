@@ -95,19 +95,19 @@ Visit `http://localhost:5173` to enter the experience.
 
 ```mermaid
 graph TD
-    User((User)) -->|WebSocket| Frontend[Web UI - Vite/React]
-    Frontend <-->|Real-time| Soketi[Soketi WS]
-    Soketi <-->|Broadcast| Backend[Backend - Node.ts]
+    User((User)) -->|"WebSocket"| Frontend[Web UI - Vite/React]
+    Frontend <-->|"Real-time"| Soketi[Soketi WS]
+    Soketi <-->|"Broadcast"| Backend[Backend - Node.ts]
     
     subgraph "High-Performance Brain"
-        Backend -->|Schedule Job| Queue["SqliteQueue (~38k/sec)"]
-        Queue -->|Write-Behind| DBManager["BufferedDbPool (~97k/sec)"]
-        DBManager <-->|O(1) Merge| BDB[("BroccoliDB - Cognitive Substrate")]
+        Backend -->|"Schedule Job"| Queue["SqliteQueue (~38k/sec)"]
+        Queue -->|"Write-Behind"| DBManager["BufferedDbPool (~97k/sec)"]
+        DBManager <-->|"O(1) Merge"| BDB[(BroccoliDB - Cognitive Substrate)]
     end
     
-    Backend -->|Generation| Gemini[Gemini API - Nano Banana]
-    Discord[Discord Client] --> Backend
-    Telegram[Telegram Client] --> Backend
+    Backend -->|"Generation"| Gemini[Gemini API - Nano Banana]
+    Discord["Discord Client"] --> Backend
+    Telegram["Telegram Client"] --> Backend
 ```
 
 ---

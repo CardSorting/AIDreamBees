@@ -20,21 +20,21 @@ The system follows a traditional client-server architecture but introduces speci
 
 ```mermaid
 graph TD
-    User((Users)) -->|Web Interface| Frontend[Frontend - Vite/React]
-    Frontend <-->|WebSockets| Soketi[Soketi WS Server]
-    Soketi <-->|Real-time Events| Backend[Backend - Express]
+    User((Users)) -->|"Web Interface"| Frontend[Frontend - Vite/React]
+    Frontend <-->|"WebSockets"| Soketi[Soketi WS Server]
+    Soketi <-->|"Real-time Events"| Backend[Backend - Express]
     
     subgraph "The High-Performance Engine"
-        Backend -->|New Job| Queue["SqliteQueue (~38k/sec)"]
-        Queue -->|Batch Process| DBManager["BufferedDbPool (~97k/sec)"]
-        DBManager <-->|Memory + Disk| BDB[("BroccoliDB - Cognitive Substrate")]
+        Backend -->|"New Job"| Queue["SqliteQueue (~38k/sec)"]
+        Queue -->|"Batch Process"| DBManager["BufferedDbPool (~97k/sec)"]
+        DBManager <-->|"Memory + Disk"| BDB[(BroccoliDB - Cognitive Substrate)]
     end
     
-    Discord[Discord API] <-->|Discord Client| Orchestrator[Cognitive Orchestrator]
-    Telegram[Telegram API] <-->|Telegram Client| Orchestrator
+    Discord["Discord API"] <-->|"Discord Client"| Orchestrator["Cognitive Orchestrator"]
+    Telegram["Telegram API"] <-->|"Telegram Client"| Orchestrator
     
     Orchestrator <--> Backend
-    Backend -->|Request| Gemini[Gemini 3.1 API]
+    Backend -->|"Request"| Gemini["Gemini 3.1 API"]
 ```
 
 ---
