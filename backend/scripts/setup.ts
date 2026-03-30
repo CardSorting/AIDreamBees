@@ -8,7 +8,8 @@ async function setup() {
   const envPath = path.resolve(process.cwd(), '.env');
   const envExamplePath = path.resolve(process.cwd(), '.env.example');
 
-  console.log('🚀 Welcome to the AIDreamBees Onboarding Tool!\n');
+  console.log('\n🌟 Welcome to the AIDreamBees Onboarding Tool! 🌟');
+  console.log('--------------------------------------------\n');
 
   if (!fs.existsSync(envExamplePath)) {
     console.error('❌ .env.example file not found. Please ensure you are running this from the backend directory.');
@@ -63,27 +64,42 @@ async function setup() {
   fs.writeFileSync(envPath, newEnv.join('\n'));
   console.log('\n✅ .env file has been successfully created!');
 
-  const runSoketi = await rl.question('\nDo you want to start the Soketi server now? (y/n, default: n): ');
-  if (runSoketi.toLowerCase() === 'y') {
-    console.log('🚀 Starting Soketi server...');
-    const { exec } = await import('node:child_process');
-    exec('bash ../start-soketi.sh', (err, stdout, stderr) => {
-      if (err) console.error('❌ Error starting Soketi:', err);
-      console.log(stdout);
-      console.error(stderr);
-    });
-  }
+  const launchAll = await rl.question('\n🚀 Do you want to launch EVERYTHING now? (Backend, Soketi, Frontend) (y/n, default: y): ');
+  const shouldLaunchAll = launchAll.toLowerCase() !== 'n';
 
-  const setupFrontend = await rl.question('\nDo you want to install frontend dependencies? (y/n, default: n): ');
-  if (setupFrontend.toLowerCase() === 'y') {
-    console.log('📦 Installing frontend dependencies...');
-    const { execSync } = await import('node:child_process');
+  if (shouldLaunchAll) {
+    console.log('\n📦 Installing all dependencies first...');
+    const { execSync, spawn } = await import('node:child_process');
     try {
+      console.log('🔹 Backend dependencies...');
+      execSync('npm install', { stdio: 'inherit' });
+      console.log('🔹 Frontend dependencies...');
       execSync('cd ../frontend && npm install', { stdio: 'inherit' });
-      console.log('✅ Frontend dependencies installed successfully!');
+
+      console.log('\n🚀 Launching services in parallel...');
+
+      // Launch Soketi
+      console.log('📡 Starting Soketi...');
+      spawn('bash', ['../start-soketi.sh'], { stdio: 'inherit', shell: true });
+
+      // Launch Backend (wait a second for Soketi)
+      setTimeout(() => {
+        console.log('⚙️ Starting Backend...');
+        spawn('npm', ['start'], { stdio: 'inherit', shell: true });
+      }, 1000);
+
+      // Launch Frontend
+      setTimeout(() => {
+        console.log('🎨 Starting Frontend...');
+        spawn('npm', ['run', 'dev'], { stdio: 'inherit', shell: true, cwd: '../frontend' });
+      }, 2000);
+
+      console.log('\n🌟 All services are booting up! Check the logs above.');
     } catch (err) {
-      console.error('❌ Error installing frontend dependencies:', err);
+      console.error('❌ Error during automated launch:', err);
     }
+  } else {
+    console.log('\n👍 Setup complete! You can start services manually when ready.');
   }
 
   rl.close();
