@@ -89,7 +89,7 @@ export function encryptApiKey(apiKey: string): string {
   const key = Buffer.from(ENCRYPTION_KEY.padEnd(32, '!').slice(0, 32));
   let encrypted = '';
   for (let i = 0; i < apiKey.length; i++) {
-    encrypted += String.fromCharCode(apiKey.charCodeAt(i) ^ key[i % key.length]!.charCodeAt(0));
+    encrypted += String.fromCharCode(apiKey.charCodeAt(i) ^ key[i % key.length]!);
   }
   return Buffer.from(encrypted).toString('base64');
 }
@@ -99,7 +99,7 @@ export function decryptApiKey(encryptedKey: string): string {
   const encrypted = Buffer.from(encryptedKey, 'base64').toString();
   let decrypted = '';
   for (let i = 0; i < encrypted.length; i++) {
-    decrypted += String.fromCharCode(encrypted.charCodeAt(i) ^ key[i % key.length]!.charCodeAt(0));
+    decrypted += String.fromCharCode(encrypted.charCodeAt(i) ^ key[i % key.length]!);
   }
   return decrypted;
 }

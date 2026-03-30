@@ -17,6 +17,8 @@ export interface QueueJob<T> {
 export type JobHandler<T> = (job: QueueJob<T>) => Promise<void>;
 
 export interface SqliteQueueOptions {
+  dbPath?: string;
+  tableName?: string;
   visibilityTimeoutMs?: number;
   pruneDoneAgeMs?: number;
   defaultMaxAttempts?: number;
@@ -35,6 +37,8 @@ export class SqliteQueue<T> {
   private pruneDoneAgeMs: number;
   private defaultMaxAttempts: number;
   private baseRetryDelayMs: number;
+  private dbPath?: string;
+  private tableName?: string;
 
   constructor(options: SqliteQueueOptions = {}) {
     const {
@@ -42,12 +46,16 @@ export class SqliteQueue<T> {
       pruneDoneAgeMs = 86400000, // 24 hours default
       defaultMaxAttempts = 5,
       baseRetryDelayMs = 1000,
+      dbPath,
+      tableName,
     } = options;
 
     this.visibilityTimeoutMs = visibilityTimeoutMs;
     this.pruneDoneAgeMs = pruneDoneAgeMs;
     this.defaultMaxAttempts = defaultMaxAttempts;
     this.baseRetryDelayMs = baseRetryDelayMs;
+    this.dbPath = dbPath;
+    this.tableName = tableName;
   }
 
   /**

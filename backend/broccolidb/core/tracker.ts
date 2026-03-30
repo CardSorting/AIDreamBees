@@ -277,16 +277,25 @@ export class AsyncTelemetryQueue {
    */
   async drain(): Promise<void> {
     // Wait for the queue to be empty
-    while (this.queue.size() > 0) {
+    while ((await this.queue.size()) > 0) {
       await new Promise((r) => setTimeout(r, 100));
     }
   }
 
-  get stats() {
-    const metrics = this.queue.getMetrics();
+  async getStats() {
+    const metrics = await this.queue.getMetrics();
     return {
       pending: metrics.pending,
       processing: metrics.processing,
+      isFlushing: this.isProcessing,
+    };
+  }
+
+  get stats() {
+    // For legacy/synchronous access if needed, though getStats is preferred
+    return {
+      pending: 0, // Cannot get actual metrics synchronously anymore
+      processing: 0,
       isFlushing: this.isProcessing,
     };
   }

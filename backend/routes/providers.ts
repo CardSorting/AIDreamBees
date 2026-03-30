@@ -1,5 +1,5 @@
 import { GoogleGenerativeAI } from '@google/generative-ai';
-import { type Request, type Response, Router } from 'express';
+import { Router, type Request, type Response } from 'express';
 import {
   decryptApiKey,
   encryptApiKey,
@@ -77,7 +77,7 @@ router.post('/', async (req: Request, res: Response) => {
 
 // Update a provider
 router.put('/:id', async (req: Request, res: Response) => {
-  const { id } = req.params;
+  const { id } = req.params as { id: string };
   const { name, apiKey, isActive } = req.body;
 
   try {
@@ -113,7 +113,7 @@ router.put('/:id', async (req: Request, res: Response) => {
 
 // Delete a provider
 router.delete('/:id', async (req: Request, res: Response) => {
-  const { id } = req.params;
+  const { id } = req.params as { id: string };
 
   try {
     const provider = await Provider.findByPk(id);
@@ -131,7 +131,7 @@ router.delete('/:id', async (req: Request, res: Response) => {
 
 // Validate a provider's API key
 router.post('/:id/validate', async (req: Request, res: Response) => {
-  const { id } = req.params;
+  const { id } = req.params as { id: string };
 
   try {
     const provider = await Provider.findByPk(id);

@@ -1208,7 +1208,7 @@ Affected Paths: ${result.affectedPaths.join(', ') || 'None'}
       'Force flush the async telemetry queue. Useful before shutting down the Agent context.',
       {},
       async () => {
-        const statsBefore = telemetryQueue.stats;
+        const statsBefore = await telemetryQueue.getStats();
         await telemetryQueue.drain();
         return {
           content: [
