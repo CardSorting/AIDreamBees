@@ -1,4 +1,5 @@
 import * as crypto from 'node:crypto';
+import { EventEmitter } from 'node:events';
 import { dbPool, BufferedDbPool } from '../db/BufferedDbPool.js';
 
 export interface QueueJob<T> {
@@ -32,6 +33,7 @@ export interface SqliteQueueOptions {
 export class SqliteQueue<T> {
   private isProcessing = false;
   private stopRequested = false;
+  private wakeUpEmitter = new EventEmitter();
 
   private visibilityTimeoutMs: number;
   private pruneDoneAgeMs: number;
@@ -93,6 +95,7 @@ export class SqliteQueue<T> {
       where: { column: 'id', value: jobId },
       layer: 'infrastructure',
     });
+    this.wakeUpEmitter.emit('enqueue');
     return jobId;
   }
 
@@ -128,6 +131,7 @@ export class SqliteQueue<T> {
     });
 
     await dbPool.pushBatch(ops);
+    this.wakeUpEmitter.emit('enqueue');
     return ids;
   }
 
@@ -155,8 +159,8 @@ export class SqliteQueue<T> {
 
         const ids = jobs.map((j) => j.id);
         const nowMs = Date.now();
-        await dbPool.pushBatch(
-          jobs.map((job) => ({
+        await dbPool.push(
+          {
             type: 'update',
             table: 'queue_jobs',
             values: {
@@ -164,9 +168,9 @@ export class SqliteQueue<T> {
               updatedAt: nowMs,
               attempts: BufferedDbPool.increment(1),
             },
-            where: { column: 'id', value: job.id },
+            where: { column: 'id', value: ids, operator: 'IN' },
             layer: 'infrastructure',
-          })),
+          },
           agentId,
         );
 
@@ -214,20 +218,18 @@ export class SqliteQueue<T> {
   }
 
   /**
-   * Mark multiple jobs as completed in a single transaction.
+   * Mark multiple jobs as completed in a single high-throughput update.
    */
   async completeBatch(ids: string[]) {
     if (ids.length === 0) return;
     const now = Date.now();
-    await dbPool.pushBatch(
-      ids.map((id) => ({
-        type: 'update',
-        table: 'queue_jobs',
-        values: { status: 'done', updatedAt: now },
-        where: { column: 'id', value: id },
-        layer: 'infrastructure',
-      })),
-    );
+    await dbPool.push({
+      type: 'update',
+      table: 'queue_jobs',
+      values: { status: 'done', updatedAt: now },
+      where: { column: 'id', value: ids, operator: 'IN' },
+      layer: 'infrastructure',
+    });
   }
 
   /**
@@ -340,13 +342,13 @@ export class SqliteQueue<T> {
   }
 
   /**
-   * Main processing loop.
+   * Main processing loop with fluid concurrency and high-throughput batching.
    */
   async process(
     handler: JobHandler<T>,
     options: { concurrency?: number; pollIntervalMs?: number; batchSize?: number } = {},
   ) {
-    const { concurrency = 1, pollIntervalMs = 50, batchSize = concurrency } = options;
+    const { concurrency = 10, pollIntervalMs = 100, batchSize = 100 } = options;
     if (this.isProcessing) return;
     this.isProcessing = true;
     this.stopRequested = false;
@@ -354,59 +356,72 @@ export class SqliteQueue<T> {
     // Background maintenance loop (every 30s)
     const maintenanceInterval = setInterval(() => this.performMaintenance(), 30000);
 
+    let activeWorkers = 0;
+    let pendingCompletions: string[] = [];
+    let completionTimeout: NodeJS.Timeout | null = null;
+
+    const flushCompletions = async () => {
+      if (pendingCompletions.length > 0) {
+        const ids = [...pendingCompletions];
+        pendingCompletions = [];
+        await this.completeBatch(ids);
+      }
+      completionTimeout = null;
+    };
+
+    const scheduleCompletion = (id: string) => {
+      pendingCompletions.push(id);
+      if (pendingCompletions.length >= batchSize) {
+        if (completionTimeout) clearTimeout(completionTimeout);
+        flushCompletions().catch(console.error);
+      } else if (!completionTimeout) {
+        completionTimeout = setTimeout(() => flushCompletions(), 10);
+      }
+    };
+
     const runWorker = async () => {
       while (!this.stopRequested) {
-        // Fetch a batch of jobs to reduce transaction overhead
-        const jobs = await this.dequeueBatch(batchSize);
+        if (activeWorkers >= concurrency) {
+          await new Promise((resolve) => setTimeout(resolve, 5));
+          continue;
+        }
+
+        const limit = Math.min(batchSize, concurrency - activeWorkers);
+        const jobs = await this.dequeueBatch(limit);
 
         if (jobs.length > 0) {
-          // Process the batch in parallel up to the specified concurrency
-          const results = await Promise.allSettled(
-            jobs.map(async (job) => {
+          for (const job of jobs) {
+            activeWorkers++;
+            (async () => {
               try {
                 await handler(job);
-                return { id: job.id, success: true as const };
+                scheduleCompletion(job.id);
               } catch (err: unknown) {
-                return {
-                  id: job.id,
-                  success: false as const,
-                  error: err instanceof Error ? err.message : String(err),
-                };
+                const error = err instanceof Error ? err.message : String(err);
+                await this.fail(job.id, error);
+              } finally {
+                activeWorkers--;
               }
-            }),
-          );
-
-          const successfulIds: string[] = [];
-          for (const res of results) {
-            if (res.status === 'fulfilled') {
-              if (res.value.success) {
-                successfulIds.push(res.value.id);
-              } else {
-                await this.fail(res.value.id, res.value.error);
-              }
-            }
+            })();
           }
-
-          // Complete all successful jobs in a single transaction
-          if (successfulIds.length > 0) {
-            await this.completeBatch(successfulIds);
-          }
-
-          // Micro-tick for high throughput
+          // Micro-tick to keep loop moving
           await new Promise((resolve) => setImmediate(resolve));
         } else {
-          // No jobs, wait for interval
-          await new Promise((resolve) => setTimeout(resolve, pollIntervalMs));
+          // No jobs, wait for signal or interval
+          await Promise.race([
+            new Promise((resolve) => setTimeout(resolve, pollIntervalMs)),
+            new Promise((resolve) => this.wakeUpEmitter.once('enqueue', resolve)),
+          ]);
         }
       }
     };
 
-    // For simplicity in this implementation, we use one worker that handles its own concurrency via Promise.allSettled
     const worker = runWorker();
 
-    // Cleanup on stop
     const cleanup = () => {
       clearInterval(maintenanceInterval);
+      if (completionTimeout) clearTimeout(completionTimeout);
+      this.isProcessing = false;
     };
 
     worker.then(cleanup).catch(cleanup);
