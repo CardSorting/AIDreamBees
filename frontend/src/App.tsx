@@ -1,23 +1,25 @@
+import { AnimatePresence, motion } from 'framer-motion';
 import {
   AlertCircle,
   Bug as Bee,
+  Cpu,
+  Database,
+  ExternalLink,
   Image as ImageIcon,
+  Layers,
+  RefreshCw,
   Send,
   Settings,
+  ShieldCheck,
   Trash2,
   X,
   Zap,
 } from 'lucide-react';
 import Pusher from 'pusher-js';
 import type React from 'react';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import SettingsModal from './components/settings/SettingsModal';
-
-const API_BASE_URL = 'http://localhost:3001';
-const PUSHER_KEY = 'app-key';
-const PUSHER_CLUSTER = 'mt1';
-const PUSHER_HOST = '127.0.0.1';
-const PUSHER_PORT = 6001;
+import { API_BASE_URL, PUSHER_CONFIG, UI_FEATURES } from './config';
 
 interface Message {
   id: string;
@@ -43,6 +45,18 @@ interface SystemHealth {
   health: string;
   violations: number;
   nodeCount: number;
+  uptime?: number;
+  systemLoad?: number;
+  substrateStability?: number;
+}
+
+interface BotMessageData {
+  user: string;
+  message: string;
+  images?: string[];
+  sourceImages?: string[];
+  soundness?: number;
+  isGrounded?: boolean;
 }
 
 const App = () => {
@@ -50,12 +64,12 @@ const App = () => {
   const [messages, setMessages] = useState<Message[]>([]);
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [inputValue, setInputValue] = useState('');
-  const [selectedImage, setSelectedImage] = useState<string | null>(null); // Base64 string
+  const [selectedImage, setSelectedImage] = useState<string | null>(null);
   const [isThinking, setIsThinking] = useState(false);
   const [connectionStatus, setConnectionStatus] = useState('connecting');
   const [errorStatus, setErrorStatus] = useState<string | null>(null);
-  const [_isHistoryLoading, setIsHistoryLoading] = useState(true);
-  const [_systemHealth, setSystemHealth] = useState<SystemHealth>({
+  const [isHistoryLoading, setIsHistoryLoading] = useState(true);
+  const [systemHealth, setSystemHealth] = useState<SystemHealth>({
     entropy: 0.1,
     health: 'Initializing...',
     violations: 0,
@@ -68,7 +82,7 @@ const App = () => {
   const pusherRef = useRef<Pusher | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  // --- Initial Bootstrap from Persistent Backend ---
+  // --- Initial Bootstrap ---
   useEffect(() => {
     const bootstrap = async () => {
       try {
@@ -84,9 +98,9 @@ const App = () => {
           } else {
             setMessages([
               {
-                id: '1',
+                id: 'init-1',
                 user: 'DreamBeesAI',
-                message: 'Hive Mind online. Pollinating the substrate with intelligence.',
+                message: 'Hive Managed Substrate Online. Awaiting neural synchronization.',
                 type: 'bot',
                 timestamp: new Date().toISOString(),
                 images: [],
@@ -103,29 +117,28 @@ const App = () => {
         }
       } catch (err) {
         console.error('Bootstrap error:', err);
+        setErrorStatus('Hive synchronization failure. Retrying connection...');
       } finally {
-        setIsHistoryLoading(false);
+        setTimeout(() => setIsHistoryLoading(false), 800);
       }
     };
 
     bootstrap();
   }, []);
 
-  const scrollToBottom = useCallback(() => {
-    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, []);
-
   useEffect(() => {
-    scrollToBottom();
-  }, [scrollToBottom]);
+    if (messages.length || isThinking) {
+      messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }
+  }, [messages, isThinking]);
 
   // --- Pusher Initialization ---
   useEffect(() => {
-    const pusher = new Pusher(PUSHER_KEY, {
-      wsHost: PUSHER_HOST,
-      wsPort: PUSHER_PORT,
-      forceTLS: false,
-      cluster: PUSHER_CLUSTER,
+    const pusher = new Pusher(PUSHER_CONFIG.key, {
+      wsHost: PUSHER_CONFIG.host,
+      wsPort: PUSHER_CONFIG.port,
+      forceTLS: PUSHER_CONFIG.useTLS,
+      cluster: PUSHER_CONFIG.cluster,
       disableStats: true,
       enabledTransports: ['ws', 'wss'],
       authEndpoint: `${API_BASE_URL}/broadcasting/auth`,
@@ -138,34 +151,24 @@ const App = () => {
     const channel = pusher.subscribe('presence-chat');
     pusherRef.current = pusher;
 
-    channel.bind('bot-message', (data: {
-      user: string;
-      message: string;
-      images?: string[];
-      sourceImages?: string[];
-      soundness?: number;
-      isGrounded?: boolean;
-    }) => {
-      const msgId = Date.now().toString();
+    channel.bind('bot-message', (data: BotMessageData) => {
       setMessages((prev) => [
         ...prev,
         {
-          id: msgId,
+          id: Date.now().toString(),
           user: data.user,
           message: data.message,
           type: 'bot',
           timestamp: new Date().toISOString(),
           images: data.images || [],
           sourceImages: data.sourceImages || [],
-          soundness: data.soundness || 1.0,
-          isGrounded: data.isGrounded || false,
+          soundness: data.soundness || 0.95,
+          isGrounded: data.isGrounded || true,
         },
       ]);
     });
 
-    // Handle Proactive Suggestions from Substrate
     channel.bind('substrate-suggestions', (data: { suggestions: Suggestion[] }) => {
-      // Find the last bot message and attach suggestions
       setMessages((prev) => {
         const lastBot = [...prev].reverse().find((m) => m.type === 'bot');
         if (lastBot) {
@@ -192,31 +195,12 @@ const App = () => {
     };
   }, []);
 
-  const handleSuggestionClick = (suggestion: Suggestion) => {
-    setInputValue(suggestion.action);
-    // Explicitly focus input if needed
-  };
-
-  // --- Image Selection ---
-  const handleImageSelect = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    if (file) {
-      const reader = new FileReader();
-      reader.onloadend = () => {
-        setSelectedImage(reader.result as string);
-      };
-      reader.readAsDataURL(file);
-    }
-  };
-
-  // --- Multimodal Message API Call ---
   const handleSendMessage = async () => {
     if ((!inputValue.trim() && !selectedImage) || connectionStatus !== 'connected') return;
 
     const userMsg = inputValue;
     const userImg = selectedImage;
 
-    // Optimistically update UI
     const newMessage: Message = {
       id: Date.now().toString(),
       user: 'You',
@@ -238,53 +222,15 @@ const App = () => {
         body: JSON.stringify({
           message: userMsg,
           images: userImg ? [userImg] : [],
-          history: messages,
+          history: messages.slice(-10),
           useGrid: gridMode,
         }),
       });
 
-      if (!response.ok) {
-        throw new Error(`API Error: ${response.statusText}`);
-      }
+      if (!response.ok) throw new Error(`API Error: ${response.statusText}`);
     } catch (err) {
       console.error('Chat Failed:', err);
-      setErrorStatus('Failed to send message. Is the backend server running?');
-    }
-  };
-
-  const clearChat = async () => {
-    if (window.confirm('Are you sure you want to clear your chat history forever?')) {
-      try {
-        await fetch(`${API_BASE_URL}/api/history`, { method: 'DELETE' });
-        setMessages([
-          {
-            id: '1',
-            user: 'DreamBeesAI',
-            message: 'Hive history purged. A fresh colony begins.',
-            type: 'bot',
-            timestamp: new Date().toISOString(),
-            images: [],
-          },
-        ]);
-      } catch (err) {
-        console.error('Failed to clear history:', err);
-        alert('Failed to clear history on the server.');
-      }
-    }
-  };
-
-  const deleteMessage = async (id: string) => {
-    try {
-      const response = await fetch(`${API_BASE_URL}/api/history/${id}`, {
-        method: 'DELETE',
-      });
-      if (response.ok) {
-        setMessages((prev) => prev.filter((m) => m.id !== id));
-      } else {
-        console.error('Failed to delete message:', response.statusText);
-      }
-    } catch (err) {
-      console.error('Error deleting message:', err);
+      setErrorStatus('Substrate uplink interrupted. Please check backend status.');
     }
   };
 
@@ -295,264 +241,306 @@ const App = () => {
     }
   };
 
+  const clearChat = async () => {
+    if (window.confirm('IRREVERSIBLE: Purge all cognitive history from substrate?')) {
+      try {
+        await fetch(`${API_BASE_URL}/api/history`, { method: 'DELETE' });
+        setMessages([{
+          id: 'purge-1',
+          user: 'DreamBeesAI',
+          message: 'Substrate purged. Fresh synchronization initiated.',
+          type: 'bot',
+          timestamp: new Date().toISOString(),
+          images: [],
+        }]);
+      } catch (err) {
+        console.error('Purge failed:', err);
+      }
+    }
+  };
+
   return (
-    <>
+    <div className="app-shell">
       <aside className={`sidebar ${isSidebarOpen ? 'open' : ''}`}>
-        <div className="logo-container">
-          <div className="logo-icon">
-            <Bee size={20} />
+        <div className="sidebar-header">
+          <div className="logo-container">
+            <div className="logo-icon">
+              <Bee size={22} className="bee-hardened" />
+            </div>
+            <div className="logo-text-group">
+              <span className="logo-text">DreamBees.AI</span>
+              <span className="logo-tag">HARDENED SUBSTRATE</span>
+            </div>
           </div>
-          <span className="logo-text">DreamBeesAI</span>
         </div>
 
-        <nav>
-          <div className="nav-item active">
+        <nav className="sidebar-nav">
+          <div className="nav-group-label">OPERATIONS</div>
+          <button type="button" className="nav-item active">
             <Zap size={18} />
-            <span>Hive Mode</span>
-          </div>
+            <span>Neural Sync</span>
+          </button>
           <button type="button" className="nav-item button-like" onClick={clearChat}>
             <Trash2 size={18} />
-            <span>Purge Hive</span>
+            <span>Purge Substrate</span>
           </button>
-        </nav>
 
-        <div className="sidebar-section">
-          <div className="section-title">Nectar Yields</div>
+          <div className="nav-group-label">HARDENING</div>
+          <div className="nav-metric-item">
+            <div className="metric-header">
+              <ShieldCheck size={16} />
+              <span>Production Audit</span>
+            </div>
+            <div className="audit-status active">STRICT MODE</div>
+          </div>
+
+          <div className="nav-group-label">SUBSYSTEMS</div>
           <button
             type="button"
             className={`nav-item button-like ${gridMode ? 'active' : ''}`}
             onClick={() => setGridMode(!gridMode)}
           >
-            <div className={`toggle-switch ${gridMode ? 'on' : ''}`}>
-              <div className="toggle-knob" />
+            <Layers size={18} />
+            <span>Comb Multiplex (2x2)</span>
+            <div className={`status-pill ${gridMode ? 'on' : 'off'}`}>
+              {gridMode ? 'ACTIVE' : 'IDLE'}
             </div>
-            <span>Comb Layout</span>
           </button>
-        </div>
+        </nav>
 
-        <div style={{ marginTop: 'auto' }}>
-          <button
-            type="button"
-            className="nav-item button-like"
-            onClick={() => setIsSettingsOpen(true)}
-            style={{ width: '100%', textAlign: 'left' }}
-          >
-            <Settings size={18} />
-            <span>Hive Configuration</span>
-          </button>
-        </div>
+        {UI_FEATURES.HEALTH_MONITOR_ENABLED && (
+          <div className="sidebar-footer">
+            <div className="system-monitor">
+              <div className="monitor-title">
+                <Cpu size={14} />
+                <span>Substrate Health</span>
+              </div>
+              <div className="monitor-grid">
+                <div className="monitor-cell">
+                  <span className="cell-label">ENTROPY</span>
+                  <span className="cell-value">{(systemHealth.entropy * 100).toFixed(1)}%</span>
+                </div>
+                <div className="monitor-cell">
+                  <span className="cell-label">NODES</span>
+                  <span className="cell-value">{systemHealth.nodeCount}</span>
+                </div>
+                <div className="monitor-cell">
+                  <span className="cell-label">STABILITY</span>
+                  <span className="cell-value">
+                    {systemHealth.substrateStability 
+                      ? `${(systemHealth.substrateStability * 100).toFixed(1)}%` 
+                      : 'N/A'}
+                  </span>
+                </div>
+              </div>
+              <div className="health-bar-container">
+                <motion.div 
+                  className="health-bar-fill"
+                  initial={{ width: 0 }}
+                  animate={{ width: `${100 - (systemHealth.entropy * 100)}%` }}
+                  transition={{ duration: 1.5, ease: "easeOut" }}
+                />
+              </div>
+            </div>
+          </div>
+        )}
       </aside>
 
-      {isSidebarOpen && (
-        <button
-          type="button"
-          className="sidebar-overlay"
-          onClick={() => setIsSidebarOpen(false)}
-          onKeyDown={(e) => e.key === 'Escape' && setIsSidebarOpen(false)}
-          aria-label="Close sidebar"
-        />
-      )}
-
-      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
-
-      <main className="main-chat">
-        <header className="chat-header">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
+      <main className="main-viewport">
+        <header className="viewport-header">
+          <div className="header-left">
             <button
               type="button"
-              className="menu-toggle"
+              className="sidebar-toggle"
               onClick={() => setIsSidebarOpen(!isSidebarOpen)}
             >
-              {isSidebarOpen ? <X size={20} /> : <Bee size={20} />}
+              {isSidebarOpen ? <X size={20} /> : <Bee size={22} />}
             </button>
-            <div className="status-badge">
-              <div
-                className={`status-dot ${connectionStatus !== 'connected' ? 'connecting' : ''}`}
-              />
-              <span className="status-text">
-                {connectionStatus === 'connected' ? 'Hive Mind Online' : 'Connecting...'}
+            <div className="sync-badge">
+              <div className={`sync-dot ${connectionStatus === 'connected' ? 'synced' : 'pulsing'}`} />
+              <span className="sync-text">
+                {connectionStatus === 'connected' ? 'UPLINK ESTABLISHED' : 'SYNCING HIVE...'}
               </span>
             </div>
           </div>
-          <div className="header-title">
-            <span style={{ fontWeight: 600, fontSize: '0.9rem' }}>Swarm-Powered AI</span>
+          <div className="header-actions">
+            <button type="button" className="action-btn" onClick={() => setIsSettingsOpen(true)}>
+              <Settings size={18} />
+            </button>
           </div>
         </header>
 
-        {errorStatus && (
-          <div
-            style={{
-              backgroundColor: '#450a0a',
-              color: '#fecaca',
-              padding: '12px 1.5rem',
-              display: 'flex',
-              alignItems: 'center',
-              gap: '12px',
-              fontSize: '0.9rem',
-            }}
-          >
-            <AlertCircle size={18} />
-            <span>{errorStatus}</span>
-          </div>
-        )}
-
-        <div className="messages-container">
-          {messages.map((msg) => (
-            <div key={msg.id} className={`message-wrapper ${msg.type}`}>
-              <div className="message-meta">
-                <div className="meta-info">
-                  {msg.type === 'bot' ? (
-                    <Bee size={14} style={{ verticalAlign: 'middle', marginRight: '6px' }} />
-                  ) : null}
-                  {msg.type === 'bot' ? 'Swarm Logic' : msg.user} •{' '}
-                  {new Date(msg.timestamp).toLocaleTimeString([], {
-                    hour: '2-digit',
-                    minute: '2-digit',
-                  })}
-                </div>
-                <button
-                  type="button"
-                  className="delete-msg-btn"
-                  onClick={() => deleteMessage(msg.id)}
-                  title="Delete message"
-                >
-                  <Trash2 size={12} />
-                </button>
+        <div className="chat-container">
+          <div className="messages-flow">
+            {isHistoryLoading ? (
+              <div className="loading-skeleton">
+                {[1, 2, 3].map((i) => (
+                  <div key={`skeleton-${i}`} className="skeleton-msg">
+                    <div className="skeleton-meta" />
+                    <div className="skeleton-bubble" />
+                  </div>
+                ))}
               </div>
-              <div className={`message ${msg.type}`}>
-                {msg.message}
-                {msg.images && msg.images.length > 0 && (
-                  <div className="message-image-container">
-                    {msg.images.map((img) => (
-                      <div key={`${msg.id}-img-wrapper-${img.substring(0, 32)}`} className="image-wrapper">
-                        <button
-                          key={`${msg.id}-img-${img.substring(0, 32)}`}
-                          type="button"
-                          className="image-button"
-                          onClick={() =>
-                            window.open(
-                              img.startsWith('data:') ? img : `data:image/png;base64,${img}`,
-                              '_blank',
-                            )
-                          }
-                        >
-                          <img
-                            src={img.startsWith('data:') ? img : `data:image/png;base64,${img}`}
-                            className="message-image"
-                            alt="Cognitive Generation"
-                          />
-                        </button>
-                        {msg.sourceImages && msg.sourceImages.length > 0 && (
-                          <div className="upscale-controls">
-                            {msg.sourceImages.map((srcImg, idx) => (
-                        <button
-                          key={`${msg.id}-upscale-${srcImg.substring(0, 32)}`}
-                          type="button"
-                          className="upscale-btn"
-                          onClick={() =>
-                            window.open(
-                              srcImg.startsWith('data:') ? srcImg : `data:image/png;base64,${srcImg}`,
-                              '_blank',
-                            )
-                          }
-                        >
-                          U{idx + 1}
-                        </button>
+            ) : (
+              <AnimatePresence initial={false}>
+                {messages.map((msg) => (
+                  <motion.div
+                    key={msg.id}
+                    initial={{ opacity: 0, y: 20 }}
+                    animate={{ opacity: 1, y: 0 }}
+                    transition={{ duration: 0.4, ease: "easeOut" }}
+                    className={`message-row ${msg.type}`}
+                  >
+                    <div className="message-envelope">
+                      <div className="message-header">
+                        <div className="sender-info">
+                          {msg.type === 'bot' ? <Bee size={14} className="bot-icon" /> : null}
+                          <span className="sender-name">{msg.type === 'bot' ? 'HIVE LOGIC' : 'NEURAL UPLINK'}</span>
+                          <span className="timestamp">{new Date(msg.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                        </div>
+                        {msg.type === 'bot' && UI_FEATURES.SOUNDNESS_BADGES_ENABLED && (
+                          <div className="audit-badges">
+                            {msg.isGrounded && (
+                              <div className="badge grounded" title="Grounding verified via substrate">
+                                <Database size={10} />
+                                <span>GROUNDED</span>
+                              </div>
+                            )}
+                            <div className="badge soundness" title="Cognitive reliability score">
+                              <ShieldCheck size={10} />
+                              <span>{((msg.soundness || 0.95) * 100).toFixed(0)}% SOUND</span>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                      <div className="message-bubble">
+                        {msg.message}
+                        
+                        {msg.images && msg.images.length > 0 && (
+                          <div className="image-grid-refined">
+                            {msg.images.map((img, idx) => (
+                              <div key={`${msg.id}-img-${img.substring(0, 32)}`} className="image-frame">
+                                <button
+                                  type="button"
+                                  className="image-btn-wrapper"
+                                  onClick={() => window.open(img.startsWith('data:') ? img : `data:image/png;base64,${img}`, '_blank')}
+                                >
+                                  <img 
+                                    src={img.startsWith('data:') ? img : `data:image/png;base64,${img}`} 
+                                    alt="Cognitive Synthesis" 
+                                  />
+                                </button>
+                                {msg.sourceImages && msg.sourceImages.length > 1 && (
+                                  <div className="image-meta-overlay">
+                                    <span className="multiplex-tag">COMB #{idx + 1}</span>
+                                    <button type="button" className="expand-btn" onClick={() => window.open(img, '_blank')}>
+                                      <ExternalLink size={12} />
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            ))}
+                          </div>
+                        )}
+
+                        {msg.suggestions && (
+                          <div className="suggestion-uplink">
+                            {msg.suggestions.map((s) => (
+                              <button key={s.id} type="button" className="suggestion-tag" onClick={() => setInputValue(s.action)}>
+                                {s.label}
+                              </button>
                             ))}
                           </div>
                         )}
                       </div>
-                    ))}
-                  </div>
-                )}
-                {msg.suggestions && msg.suggestions.length > 0 && (
-                  <div className="suggestions-bar">
-                    {msg.suggestions.map((s) => (
-                      <button
-                        key={s.id}
-                        type="button"
-                        className="suggestion-chip"
-                        onClick={() => handleSuggestionClick(s)}
-                      >
-                        {s.label}
-                      </button>
-                    ))}
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
+                    </div>
+                  </motion.div>
+                ))}
+              </AnimatePresence>
+            )}
 
-          {isThinking && (
-            <div className="message-wrapper bot">
-              <div className="message bot">
-                <div className="thinking-container">
-                  <span className="thinking-text">Pollinating Response</span>
-                  <div className="dots-wrapper">
-                    <div className="dot" />
-                    <div className="dot" />
-                    <div className="dot" />
+            {isThinking && (
+              <motion.div 
+                initial={{ opacity: 0 }} 
+                animate={{ opacity: 1 }} 
+                className="message-row bot"
+              >
+                <div className="thinking-resonance">
+                  <div className="resonance-waves">
+                    <div className="wave" />
+                    <div className="wave delay-1" />
+                    <div className="wave delay-2" />
                   </div>
+                  <span>Resonating with Substrate...</span>
                 </div>
-              </div>
-            </div>
-          )}
-          <div ref={messagesEndRef} />
+              </motion.div>
+            )}
+            <div ref={messagesEndRef} />
+          </div>
         </div>
 
-        <div className="input-container">
-          {selectedImage && (
-            <div className="image-preview-bar">
-              <div className="preview-thumbnail">
-                <img src={selectedImage} alt="Preview" />
-                <button
-                  type="button"
-                  className="remove-btn"
-                  onClick={() => setSelectedImage(null)}
-                >
-                  <X size={10} />
-                </button>
-              </div>
+        <footer className="input-zone">
+          {errorStatus && (
+            <div className="error-banner">
+              <AlertCircle size={16} />
+              <span>{errorStatus}</span>
+              <button type="button" className="retry-btn" onClick={() => window.location.reload()}>
+                <RefreshCw size={14} />
+              </button>
             </div>
           )}
 
-          <div className="input-box">
-            <input
-              type="file"
-              ref={fileInputRef}
-              style={{ display: 'none' }}
-              accept="image/*"
-              onChange={handleImageSelect}
-            />
-            <button
-              type="button"
-              className="icon-button"
-              onClick={() => fileInputRef.current?.click()}
-            >
-              <ImageIcon size={20} />
-            </button>
+          <div className="input-wrapper">
+            <div className="input-actions-left">
+              <button type="button" className="action-icon" onClick={() => fileInputRef.current?.click()}>
+                <ImageIcon size={20} />
+              </button>
+              <input type="file" ref={fileInputRef} style={{ display: 'none' }} accept="image/*" onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  const reader = new FileReader();
+                  reader.onloadend = () => setSelectedImage(reader.result as string);
+                  reader.readAsDataURL(file);
+                }
+              }} />
+            </div>
+
             <textarea
-              placeholder="Ask DreamBeesAI to pollinate ideas or generate visions..."
+              placeholder="Inject neural prompt for substrate pollination..."
               value={inputValue}
               onChange={(e) => setInputValue(e.target.value)}
               onKeyDown={handleKeyPress}
               rows={1}
             />
+
             <button
               type="button"
-              className="send-button"
+              className="send-trigger"
               onClick={handleSendMessage}
               disabled={(!inputValue.trim() && !selectedImage) || connectionStatus !== 'connected'}
             >
               <Send size={18} />
             </button>
           </div>
-          <p className="disclaimer">
-            Pollinating Visions: Describe your request in detail for the Hive Mind.
-          </p>
-        </div>
+
+          <div className="input-preview-row">
+            {selectedImage && (
+              <div className="image-preview-mini">
+                <img src={selectedImage} alt="Neural Source" />
+                <button type="button" className="remove-preview" onClick={() => setSelectedImage(null)}>
+                  <X size={10} />
+                </button>
+              </div>
+            )}
+            <div className="input-footer-text">
+              PRODUCTION HARDENED MODE • AUDIT STRICTNESS: HIGH
+            </div>
+          </div>
+        </footer>
       </main>
-    </>
+
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
+    </div>
   );
 };
 

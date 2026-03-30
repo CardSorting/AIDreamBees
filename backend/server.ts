@@ -1,3 +1,4 @@
+import os from 'node:os';
 import bodyParser from 'body-parser';
 import cors from 'cors';
 import dotenv from 'dotenv';
@@ -6,18 +7,19 @@ import helmet from 'helmet';
 import morgan from 'morgan';
 import Pusher from 'pusher';
 import winston from 'winston';
-import { initDB, Message } from './db.js';
-import { combineToGrid, getAIResponse } from './gemini.js';
-import providersRouter from './routes/providers.js';
-import { DreamBeesClient } from './infrastructure/discord/DreamBeesClient.js';
 import { handleDiscordMessage } from './core/DiscordOrchestrator.js';
-import { DreamBeesTelegramClient } from './infrastructure/telegram/DreamBeesTelegramClient.js';
 import { handleTelegramMessage } from './core/TelegramOrchestrator.js';
+import { initDB, Message, sequelize } from './db.js';
+import { combineToGrid, getAIResponse } from './gemini.js';
+import { DreamBeesClient } from './infrastructure/discord/DreamBeesClient.js';
+import { DreamBeesTelegramClient } from './infrastructure/telegram/DreamBeesTelegramClient.js';
+import providersRouter from './routes/providers.js';
 
 dotenv.config();
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const startTime = Date.now();
 
 // --- Production Logging (Winston) ---
 const logger = winston.createLogger({
@@ -91,11 +93,27 @@ app.get('/api/history', async (_req: Request, res: Response) => {
 // Structural Health API
 app.get('/api/health', async (_req: Request, res: Response) => {
   try {
+    const memoryUsage = process.memoryUsage();
+    const systemUptime = os.uptime();
+    const appUptime = (Date.now() - startTime) / 1000;
+    
+    // Check DB health
+    let dbStatus = 'Optimal';
+    try {
+      await sequelize.authenticate();
+    } catch {
+      dbStatus = 'Degraded';
+    }
+
     const health = {
-      entropy: Math.random() * 0.5,
-      health: 'Optimal',
+      entropy: Math.min(0.9, (memoryUsage.heapUsed / memoryUsage.heapTotal) + (Math.random() * 0.05)),
+      health: dbStatus,
       violations: 0,
       nodeCount: await Message.count(),
+      uptime: appUptime,
+      systemUptime: systemUptime,
+      systemLoad: os.loadavg()[0],
+      substrateStability: 0.99,
     };
     res.json(health);
   } catch (error) {
@@ -152,8 +170,11 @@ app.post('/api/chat', async (req: Request, res: Response) => {
     // 2. Trigger "Thinking" status via Soketi
     pusher.trigger('presence-chat', 'bot-thinking', { isThinking: true });
 
-    // 3. Substrate Retrieval (Mocked for now)
-    const substrateContext = 'Knowledge base retrieval active.';
+    // 3. Substrate Retrieval (Functional context grounding)
+    const recentHistory = await Message.findAll({ limit: 5, order: [['timestamp', 'DESC']] });
+    const substrateContext = recentHistory.length > 0 
+      ? `Resonating with recent hive activity: ${recentHistory.map(m => m.message.substring(0, 50)).join('; ')}`
+      : 'Knowledge base retrieval active.';
 
     // 4. Call Gemini API with Augmented Context
     const resultParts = await getAIResponse(history, message, substrateContext, useGrid);
@@ -196,11 +217,15 @@ app.post('/api/chat', async (req: Request, res: Response) => {
     });
 
     // 8. Update Structural Health (Trigger update)
+    const memoryUsage = process.memoryUsage();
     const health = {
-      entropy: Math.random() * 0.5,
+      entropy: Math.min(0.9, (memoryUsage.heapUsed / memoryUsage.heapTotal) + (Math.random() * 0.05)),
       health: 'Stable',
       violations: 0,
       nodeCount: await Message.count(),
+      uptime: (Date.now() - startTime) / 1000,
+      systemLoad: os.loadavg()[0],
+      substrateStability: 0.995,
     };
     pusher.trigger('presence-chat', 'system-update', { health });
 
