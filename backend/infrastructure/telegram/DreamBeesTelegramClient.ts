@@ -10,12 +10,19 @@ const logger = winston.createLogger({
   transports: [new winston.transports.Console()],
 });
 
-export class DreamBeesAITelegramClient {
+export class DreamBeesAITelegramClient implements TelegramClientInterface {
   private bot: TelegramBot | null = null;
   private onMessageCallback: (bot: TelegramBot, msg: TelegramBot.Message) => Promise<void>;
 
   constructor(onMessageCallback: (bot: TelegramBot, msg: TelegramBot.Message) => Promise<void>) {
     this.onMessageCallback = onMessageCallback;
+  }
+
+  async sendMessage(chatId: number | string, text: string): Promise<void> {
+    if (!this.bot) {
+      throw new Error('Telegram bot is not initialized');
+    }
+    await this.bot.sendMessage(chatId, text);
   }
 
   public async start() {

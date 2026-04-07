@@ -6,7 +6,11 @@
   "description": "A high-performance, real-time chat interface for the **Nano Banana 2** model.",
   "main": "index.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "start:dev": "npm run start:soketi & npm run start:backend & npm run start:frontend",
+    "start:soketi": "./start-soketi.sh",
+    "start:backend": "cd backend && npm install && npm start",
+    "start:frontend": "npm install && npm run dev"
   },
   "repository": {
     "type": "git",

@@ -23,6 +23,12 @@
       },
       "correctness": {
         "noUnusedVariables": "error"
+      },
+      "suspicious": {
+        "noExplicitAny": "warn"
+      },
+      "complexity": {
+        "noStaticOnlyClass": "warn"
       }
     }
   },

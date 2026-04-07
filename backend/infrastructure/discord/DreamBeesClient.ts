@@ -11,7 +11,7 @@ const logger = winston.createLogger({
   transports: [new winston.transports.Console()],
 });
 
-export class DreamBeesAIClient {
+export class DreamBeesAIClient implements DiscordClientInterface {
   private client: Client;
   private onMessageCallback: (message: Message, thread: ThreadChannel) => Promise<void>;
 
@@ -26,6 +26,14 @@ export class DreamBeesAIClient {
 
     this.onMessageCallback = onMessageCallback;
     this.setupListeners();
+  }
+
+  async sendMessageToThread(thread: ThreadChannel, content: string, files?: any[]): Promise<void> {
+    if (files && files.length > 0) {
+      await thread.send({ content, files });
+    } else {
+      await thread.send(content);
+    }
   }
 
   private setupListeners() {
