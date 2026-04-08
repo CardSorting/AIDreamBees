@@ -7,10 +7,11 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "start:dev": "npm run start:soketi & npm run start:backend & npm run start:frontend",
+    "setup": "npm install && cd backend && npm install && cd ../frontend && npm install",
+    "dev": "concurrently -n \"SOKETI,BACKND,FRONT\" -c \"magenta,blue,green\" \"npm run start:soketi\" \"npm run start:backend\" \"npm run start:frontend\"",
     "start:soketi": "./start-soketi.sh",
-    "start:backend": "cd backend && npm install && npm start",
-    "start:frontend": "npm install && npm run dev"
+    "start:backend": "cd backend && npm start",
+    "start:frontend": "cd frontend && npm run dev"
   },
   "repository": {
     "type": "git",
@@ -22,6 +23,7 @@
   },
   "homepage": "https://github.com/CardSorting/DreamBeesAI#readme",
   "devDependencies": {
-    "@biomejs/biome": "2.4.9"
+    "@biomejs/biome": "2.4.9",
+    "concurrently": "^9.2.1"
   }
 }
